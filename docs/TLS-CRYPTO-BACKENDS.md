@@ -25,6 +25,15 @@ while `WITH_TLS` and `WITH_CRYPTO` are independent capability gates. CMake
 stops with an error when `-DWITH_SSL=ON` is combined with
 `RDKAFKA_TLS_BACKEND=schannel` or `none`, instead of silently ignoring it.
 
+SASL GSSAPI on Windows uses SSPI Kerberos, independently of the TLS backend.
+It calls the wide-character SSPI functions explicitly (`AcquireCredentialsHandleW`,
+`InitializeSecurityContextW`). Before this, MSVC CMake builds, which do not
+define `UNICODE`, passed the wide target SPN to `InitializeSecurityContextA`, and
+authentication failed with "Target unknown (0x80090303)". The Visual Studio
+project defines `UNICODE` and was not affected. With `debug=security` the client
+logs the target SPN. The Windows workflow checks that the shared DLL imports
+the W functions; it has no KDC, so a Kerberos round trip is not part of CI.
+
 The configure equivalents are `--with-tls-backend=openssl|schannel|none` and
 `--with-crypto-backend=openssl|bcrypt|none`. The existing Windows Visual Studio
 project retains its ordinary OpenSSL default; CMake provides backend selection.
