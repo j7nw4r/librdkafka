@@ -124,7 +124,13 @@ void foo (void) {
     mkl_allvar_set WITH_SCHANNEL WITH_SCHANNEL n
     mkl_allvar_set WITH_CRYPTO_OPENSSL WITH_CRYPTO_OPENSSL n
     mkl_allvar_set WITH_CRYPTO_BCRYPT WITH_CRYPTO_BCRYPT n
-    mkl_allvar_set WITH_TLS WITH_TLS "$WITH_SSL"
+    # WITH_SSL is empty when --disable-ssl skips the libssl check; an empty
+    # value would make mklove write a string define.
+    if [[ "$WITH_SSL" == y ]]; then
+      mkl_allvar_set WITH_TLS WITH_TLS y
+    else
+      mkl_allvar_set WITH_TLS WITH_TLS n
+    fi
     mkl_allvar_set WITH_CRYPTO WITH_CRYPTO n
     if [[ "$tls_backend" == schannel ]]; then
       mkl_compile_check schannel WITH_SCHANNEL fail CC "-lsecur32 -lcrypt32 -lbcrypt -lncrypt" '
