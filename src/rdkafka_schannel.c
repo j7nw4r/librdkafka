@@ -484,9 +484,12 @@ rd_kafka_schannel_ctx_init(rd_kafka_t *rk, char *errstr, size_t errstr_size) {
                         }
                 }
                 if (!cfg->identity) {
-                        rd_snprintf(errstr, errstr_size,
-                                    "Schannel PKCS#12 keystore has no usable "
-                                    "private-key identity");
+                        rd_snprintf(
+                            errstr, errstr_size,
+                            "Schannel ephemeral PKCS#12 import has no "
+                            "usable private-key identity; use an "
+                            "existing ssl.schannel.certificate identity. "
+                            "No private key was persisted");
                         goto fail;
                 }
                 if (cfg->own_key &&
