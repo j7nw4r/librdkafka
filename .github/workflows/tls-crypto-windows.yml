@@ -132,7 +132,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install libcurl with the Schannel backend
-        run: vcpkg install curl:x64-windows
+        # Classic mode: the repository vcpkg.json would also build OpenSSL.
+        run: vcpkg install --classic curl:x64-windows
       - name: Configure Schannel, BCrypt and libcurl
         shell: pwsh
         run: >-
