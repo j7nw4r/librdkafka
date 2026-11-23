@@ -240,6 +240,11 @@ static int sign_data(rd_kafka_crypto_key_t *key,
                                    (PBYTE)group, sizeof(group), &got, 0);
         if (status != ERROR_SUCCESS)
                 goto done;
+        stage  = "algorithm name";
+        status = NCryptGetProperty(key->key, NCRYPT_ALGORITHM_PROPERTY,
+                                   (PBYTE)name, sizeof(name), &got, 0);
+        if (status != ERROR_SUCCESS)
+                goto done;
         if (sigalg == RD_KAFKA_CRYPTO_RS256) {
                 stage = "RSA algorithm compatibility";
                 if (wcscmp(group, NCRYPT_RSA_ALGORITHM_GROUP)) {
@@ -250,7 +255,14 @@ static int sign_data(rd_kafka_crypto_key_t *key,
                 flags = NCRYPT_PAD_PKCS1_FLAG;
         } else if (sigalg == RD_KAFKA_CRYPTO_ES256) {
                 stage = "ECDSA algorithm compatibility";
-                if (wcscmp(group, NCRYPT_ECDSA_ALGORITHM_GROUP)) {
+                /* The software KSP can classify PKCS#8 EC keys as ECDH.
+                 * Windows permits those keys to sign with ECDSA; .NET's
+                 * ECDsaCng uses the same rule. The P-256 and native usage
+                 * checks below still apply, with no key export or provider
+                 * fallback.
+                 */
+                if (wcscmp(group, NCRYPT_ECDSA_ALGORITHM_GROUP) &&
+                    wcscmp(group, NCRYPT_ECDH_ALGORITHM_GROUP)) {
                         status = NTE_BAD_ALGID;
                         goto done;
                 }
@@ -263,12 +275,8 @@ static int sign_data(rd_kafka_crypto_key_t *key,
                         status = NTE_BAD_LEN;
                         goto done;
                 }
-                stage  = "ECDSA algorithm name";
-                status = NCryptGetProperty(key->key, NCRYPT_ALGORITHM_PROPERTY,
-                                           (PBYTE)name, sizeof(name), &got, 0);
-                if (status != ERROR_SUCCESS)
-                        goto done;
-                if (wcscmp(name, NCRYPT_ECDSA_P256_ALGORITHM)) {
+                if (wcscmp(name, NCRYPT_ECDSA_P256_ALGORITHM) &&
+                    wcscmp(name, NCRYPT_ECDH_P256_ALGORITHM)) {
                         WCHAR curve[64] = {0};
                         stage           = "ECDSA named curve";
                         status = NCryptGetProperty(key->key, L"ECCCurveName",
@@ -320,8 +328,10 @@ done:
         SecureZeroMemory(hash, sizeof(hash));
         free(sig);
         if (!ok)
-                snprintf(e, en, "BCrypt signing %s failed (0x%08lx)", stage,
-                         (unsigned long)(ULONG)status);
+                snprintf(e, en,
+                         "BCrypt signing %s failed (0x%08lx); group=%ls "
+                         "algorithm=%ls",
+                         stage, (unsigned long)(ULONG)status, group, name);
         return ok ? 0 : -1;
 }
 static void global_noop(void) {
