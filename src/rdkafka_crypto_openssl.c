@@ -235,6 +235,16 @@ static int sign_data(rd_kafka_crypto_key_t *k,
 #endif
         } else if (alg == RD_KAFKA_CRYPTO_ES256) {
 #if !defined(OPENSSL_NO_EC) && !defined(OPENSSL_NO_ECDSA)
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L && !defined(LIBRESSL_VERSION_NUMBER)
+                char name[80];
+                size_t name_len = 0;
+                if (EVP_PKEY_is_a(k->key, "EC") != 1 ||
+                    EVP_PKEY_get_group_name(k->key, name, sizeof(name),
+                                            &name_len) != 1 ||
+                    (strcmp(name, "prime256v1") && strcmp(name, "P-256") &&
+                     strcmp(name, "secp256r1")))
+                        goto done;
+#else
                 EC_KEY *ec;
                 const EC_GROUP *group;
                 int curve;
@@ -248,6 +258,7 @@ static int sign_data(rd_kafka_crypto_key_t *k,
                 EC_KEY_free(ec);
                 if (curve != NID_X9_62_prime256v1)
                         goto done;
+#endif
 #else
                 snprintf(
                     e, en,
