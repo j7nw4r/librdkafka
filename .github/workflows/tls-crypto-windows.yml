@@ -53,12 +53,20 @@ jobs:
           cmake -S . -B build-static -A x64
           -DRDKAFKA_TLS_BACKEND=schannel -DRDKAFKA_CRYPTO_BACKEND=bcrypt
           -DRDKAFKA_BUILD_STATIC=ON -DRDKAFKA_BUILD_BACKEND_TESTS=ON
-          -DRDKAFKA_BUILD_TESTS=OFF -DRDKAFKA_BUILD_EXAMPLES=OFF
+          -DRDKAFKA_BUILD_TESTS=ON -DRDKAFKA_BUILD_EXAMPLES=OFF
           -DWITH_CURL=OFF -DWITH_ZLIB=OFF -DWITH_ZSTD=OFF
           -DWITH_HDRHISTOGRAM=OFF -DENABLE_LZ4_EXT=OFF -DWITH_SASL=ON
       - name: Build native static backend tests
         id: native_build
         run: cmake --build build-static --config Release --parallel 4
+      - name: Run the local Admin unit test with BCrypt SCRAM credentials
+        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
+        working-directory: tests
+        shell: pwsh
+        run: |
+          $env:TESTS = '0080'
+          ..\build-static\tests\Release\test-runner.exe -l
+          if ($LASTEXITCODE -ne 0) { throw 'Test 0080 failed' }
       - name: Exercise BCrypt primitives and verify JOSE signatures independently
         if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
         run: python tests/crypto/run_vectors.py --binary build-static/Release/backend-crypto-test.exe
