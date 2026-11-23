@@ -152,7 +152,7 @@ endif()
 # Define flags with cmake instead of by defining them on win32_config.h
 if(WITHOUT_WIN32_CONFIG)
   list(APPEND rdkafka_compile_definitions WITHOUT_WIN32_CONFIG)
-  foreach(backend_flag WITH_TLS WITH_SCHANNEL WITH_CRYPTO WITH_CRYPTO_OPENSSL WITH_CRYPTO_BCRYPT)
+  foreach(backend_flag WITH_TLS WITH_SCHANNEL WITH_CRYPTO WITH_CRYPTO_OPENSSL WITH_CRYPTO_BCRYPT WITH_CURL WITH_OAUTHBEARER_OIDC)
     if(${backend_flag})
       list(APPEND rdkafka_compile_definitions ${backend_flag}=1)
     else()
