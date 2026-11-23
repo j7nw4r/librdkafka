@@ -719,8 +719,10 @@ int main_0004_conf(int argc, char **argv) {
                 TEST_SAY("rd_kafka_new() failed as expected: %s\n", errstr);
                 rd_kafka_conf_destroy(conf);
         }
+#endif /* WITH_SSL */
 
-#if WITH_OAUTHBEARER_OIDC
+        /* The library checks https.ca.* only in builds with broker TLS. */
+#if WITH_TLS && WITH_OAUTHBEARER_OIDC
         {
                 TEST_SAY(
                     "Verify that https.ca.location is mutually "
@@ -785,11 +787,11 @@ int main_0004_conf(int argc, char **argv) {
 
                 rd_kafka_destroy(rk);
         }
-#endif /* WITH_OAUTHBEARER_OIDC */
+#endif /* WITH_TLS && WITH_OAUTHBEARER_OIDC */
 
         /* Verify that OpenSSL_AppLink is not needed on Windows (#3554) */
 
-#ifdef _WIN32
+#if WITH_SSL && defined(_WIN32)
         {
                 FILE *fp;
                 TEST_SAY(
@@ -830,9 +832,7 @@ int main_0004_conf(int argc, char **argv) {
 
                 TEST_SAY("rd_kafka_new() failed as expected: %s\n", errstr);
         }
-#endif /* _WIN32 */
-
-#endif /* WITH_SSL */
+#endif /* WITH_SSL && _WIN32 */
 
         /* Canonical int values, aliases, s2i-verified strings, doubles */
         {
