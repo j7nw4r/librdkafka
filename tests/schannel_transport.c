@@ -124,7 +124,7 @@ int main(int argc, char **argv) {
         u_long nonblock        = 1;
         int socket_buffer_size = 1024, result = 0, have_lock = 0,
             have_context = 0;
-        int reject, cancel, before;
+        int reject, cancel, memory_ca, ephemeral_rejection, before;
         char error[1024] = "";
         rd_buf_t sendbuf;
         rd_slice_t slice;
@@ -138,15 +138,37 @@ int main(int argc, char **argv) {
                     "verify-host connect-port accept|reject echo|cancel\n");
                 return 2;
         }
-        reject = !strcmp(argv[6], "reject");
+        reject = !strncmp(argv[6], "reject", 6);
+        ephemeral_rejection = !strcmp(argv[6], "reject-ephemeral");
         cancel = !strcmp(argv[7], "cancel");
+        memory_ca = !strcmp(argv[7], "memory");
         memset(&rk, 0, sizeof(rk));
         memset(&broker, 0, sizeof(broker));
         memset(&transport, 0, sizeof(transport));
         CHECK(WSAStartup(MAKEWORD(2, 2), &wsa) == 0);
         conf = rd_kafka_conf_new();
-        CHECK(set(conf, "ssl.ca.location", argv[1], error, sizeof(error)));
-        if (argv[2][0] == '@') {
+        if (memory_ca) {
+                size_t size;
+                char *ca = rd_file_read(argv[1], &size, 16 * 1024 * 1024);
+                rd_kafka_conf_t *copy;
+                CHECK(ca != NULL);
+                CHECK(rd_kafka_conf_set_ssl_cert(conf, RD_KAFKA_CERT_CA,
+                          RD_KAFKA_CERT_ENC_PEM, ca, size, error,
+                          sizeof(error)) == RD_KAFKA_CONF_OK);
+                SecureZeroMemory(ca, size); rd_free(ca);
+                copy = rd_kafka_conf_dup(conf);
+                CHECK(copy != NULL);
+                CHECK(rd_kafka_conf_set_ssl_cert(conf, RD_KAFKA_CERT_CA,
+                          RD_KAFKA_CERT_ENC_PEM, NULL, 0, error,
+                          sizeof(error)) == RD_KAFKA_CONF_OK);
+                rd_kafka_conf_destroy(conf); conf = copy;
+        } else {
+                CHECK(set(conf, "ssl.ca.location", argv[1], error, sizeof(error)));
+        }
+        if (!strncmp(argv[2], "store:", 6)) {
+                CHECK(set(conf, "ssl.schannel.certificate", argv[2] + 6,
+                          error, sizeof(error)));
+        } else if (argv[2][0] == '@') {
                 CHECK(set(conf, "ssl.keystore.location", argv[2] + 1, error,
                           sizeof(error)));
                 CHECK(set(conf, "ssl.keystore.password", argv[3], error,
@@ -160,6 +182,9 @@ int main(int argc, char **argv) {
         rk.rk_conf = *conf;
         if (rd_kafka_schannel_ctx_init(&rk, error, sizeof(error)) == -1) {
                 if (reject) {
+                        if (ephemeral_rejection)
+                                CHECK(strstr(error, "ephemeral") &&
+                                      strstr(error, "No private key was persisted"));
                         printf(
                             "PASS expected Schannel configuration rejection: "
                             "%s\n",
@@ -185,6 +210,11 @@ int main(int argc, char **argv) {
         CHECK(setsockopt(fd, SOL_SOCKET, SO_SNDBUF,
                          (const char *)&socket_buffer_size,
                          sizeof(socket_buffer_size)) == 0);
+        {
+                int no_delay = 1;
+                CHECK(setsockopt(fd, IPPROTO_TCP, TCP_NODELAY,
+                          (const char *)&no_delay, sizeof(no_delay)) == 0);
+        }
         CHECK(ioctlsocket(fd, FIONBIO, &nonblock) == 0);
         transport.rktrans_s        = fd;
         transport.rktrans_wsaevent = WSACreateEvent();
@@ -193,6 +223,7 @@ int main(int argc, char **argv) {
                                       sizeof(error)) == -1 ||
             handshake(&transport, error, sizeof(error)) == -1) {
                 if (reject) {
+                        if (ephemeral_rejection) CHECK(strstr(error, "ephemeral"));
                         printf("PASS expected Schannel TLS rejection: %s\n",
                                error);
                         goto done;
@@ -244,6 +275,7 @@ int main(int argc, char **argv) {
         }
         CHECK(rd_slice_offset(&slice) == 0 &&
               rd_kafka_schannel_send_pending(&transport, &slice));
+        CHECK(!transport.rktrans_blocked);
         deadline = GetTickCount64() + 20000;
         while ((rd_slice_remains(&slice) || total < sizeof(payload)) &&
                GetTickCount64() < deadline) {

@@ -17,6 +17,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import pkcs12
 from cryptography.x509.oid import NameOID, ExtendedKeyUsageOID
+from windows_certificate_store import temporary_windows_identities
 
 
 def certificates(root):
@@ -55,28 +56,41 @@ def certificates(root):
 
 
 def case(binary, runner, root, name, ca="ca", client="client", hostname="localhost",
-         server="server", reject=False, cancel=False, pfx=False):
+         server="server", reject=False, cancel=False, pfx=False,
+         selector=None, memory_ca=False, ephemeral_rejection=False,
+         require_client=True):
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     listener.listen(1)
-    listener.settimeout(20)
+    listener.settimeout(.1)
+    stop = threading.Event()
     port = listener.getsockname()[1]
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = context.maximum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(str(root / f"{server}.crt"), str(root / f"{server}.key"))
     context.load_verify_locations(cafile=str(root / "ca.crt"))
-    context.verify_mode = ssl.CERT_REQUIRED
+    context.verify_mode = ssl.CERT_REQUIRED if require_client else ssl.CERT_NONE
     errors = queue.Queue()
     active = []
     expected = bytes((i * 31 + i // 97) & 255 for i in range(131071))
     def serve():
         seen = bytearray()
         try:
-            raw, _ = listener.accept()
+            while not stop.is_set():
+                try:
+                    raw, _ = listener.accept()
+                    break
+                except socket.timeout:
+                    continue
+            else:
+                return
             raw.settimeout(15)
+            raw.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             active.append(raw)
-            with context.wrap_socket(raw, server_side=True) as tls:
+            with context.wrap_socket(raw, server_side=True,
+                                     do_handshake_on_connect=False) as tls:
                 active.append(tls)
+                tls.do_handshake()
                 while True:
                     try:
                         data = tls.recv(4096)
@@ -94,7 +108,7 @@ def case(binary, runner, root, name, ca="ca", client="client", hostname="localho
             if not reject and not cancel and bytes(seen) != expected:
                 raise AssertionError(f"TLS peer received {len(seen)} unexpected bytes")
         except (ssl.SSLError, ConnectionResetError, BrokenPipeError, OSError) as exc:
-            if not reject and not (cancel and not seen):
+            if not stop.is_set() and not reject and not (cancel and not seen):
                 errors.put(exc)
         except BaseException as exc:
             errors.put(exc)
@@ -102,13 +116,16 @@ def case(binary, runner, root, name, ca="ca", client="client", hostname="localho
     worker.start()
     try:
         args = runner + [str(binary), str(root / f"{ca}.crt"),
-                         "@" + str(root / "client.pfx") if pfx else (str(root / f"{client}.crt") if client else "-"),
+                         ("store:" + selector) if selector else ("@" + str(root / "client.pfx") if pfx else (str(root / f"{client}.crt") if client else "-")),
                          "fixture-pass" if pfx else (str(root / f"{client}.key") if client else "-"),
-                         hostname, str(port), "reject" if reject else "accept",
-                         "cancel" if cancel else "echo"]
+                         hostname, str(port), "reject-ephemeral" if ephemeral_rejection else ("reject" if reject else "accept"),
+                         "cancel" if cancel else ("memory" if memory_ca else "echo")]
         result = subprocess.run(args, text=True, capture_output=True, timeout=45)
         if result.returncode:
             raise AssertionError(f"{name}: exit {result.returncode}\n{result.stdout}{result.stderr}")
+        if reject:
+            stop.set()
+            listener.close()
         worker.join(5)
         if worker.is_alive():
             raise AssertionError(f"{name}: TLS peer shutdown deadline exceeded")
@@ -116,6 +133,7 @@ def case(binary, runner, root, name, ca="ca", client="client", hostname="localho
             raise errors.get()
         print(f"PASS {name}: {result.stdout.strip()}", flush=True)
     finally:
+        stop.set()
         listener.close()
         for sock in active:
             with contextlib.suppress(OSError):
@@ -134,15 +152,34 @@ def main():
         certificates(root)
         runner = shlex.split(args.runner)
         binary = args.client.resolve()
-        case(binary, runner, root, "verified mTLS exact/partial IO")
-        case(binary, runner, root, "PFX verified mTLS ephemeral identity", pfx=True)
-        case(binary, runner, root, "cancellation discards pending prefix", cancel=True)
-        case(binary, runner, root, "wrong hostname", hostname="127.0.0.1", reject=True)
-        case(binary, runner, root, "unknown CA", ca="wrong-ca", reject=True)
-        case(binary, runner, root, "expired server", server="expired-server", reject=True)
-        case(binary, runner, root, "missing client", client=None, reject=True)
-        case(binary, runner, root, "invalid client", client="invalid-client", reject=True)
-        case(binary, runner, root, "expired client", client="expired-client", reject=True)
+        failures = []
+        def run(name, **kwargs):
+            try:
+                case(binary, runner, root, name, **kwargs)
+            except Exception as exc:
+                failures.append(name)
+                print(f"FAIL {name}: {exc}", flush=True)
+        run("verified server TLS exact/partial IO", client=None, require_client=False)
+        if os.name == "nt" and not runner:
+            with temporary_windows_identities(root) as selectors:
+                run("read-only My identity verified mTLS", selector=selectors["client"])
+                run("memory CA duplicate/clear verified mTLS", selector=selectors["client"], memory_ca=True)
+                run("cancellation discards pending prefix", selector=selectors["client"], cancel=True)
+                run("wrong hostname", selector=selectors["client"], hostname="127.0.0.1", reject=True)
+                run("unknown CA", selector=selectors["client"], ca="wrong-ca", reject=True)
+                run("expired server", selector=selectors["client"], server="expired-server", reject=True)
+                run("missing client", client=None, reject=True)
+                run("invalid client", selector=selectors["invalid-client"], reject=True)
+                run("expired client", selector=selectors["expired-client"], reject=True)
+        else:
+            # Compatibility execution never silently provisions native keys.
+            run("compatibility file mTLS", client="client")
+        # Ephemeral imports must fail explicitly on the affected Windows API;
+        # no fallback is allowed to write a private key to disk.
+        run("ephemeral PEM limitation diagnostic", reject=True, ephemeral_rejection=True)
+        run("ephemeral PFX limitation diagnostic", pfx=True, reject=True, ephemeral_rejection=True)
+        if failures:
+            raise SystemExit(f"Schannel transport failed {len(failures)} case(s): " + ", ".join(failures))
     print("PASS all Schannel transport cases; no Kafka protocol was emulated", flush=True)
 
 
