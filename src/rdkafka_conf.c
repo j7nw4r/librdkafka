@@ -5165,9 +5165,16 @@ int unittest_conf(void) {
                                 break;
 
                         case _RK_C_S2F:
-                        case _RK_C_S2I:
-                                val = prop->s2i[0].str;
+                        case _RK_C_S2I: {
+                                int j = 0;
+                                /* Use the first value this build supports. */
+                                while (prop->s2i[j].str &&
+                                       prop->s2i[j].unsupported)
+                                        j++;
+                                val = prop->s2i[j].str ? prop->s2i[j].str
+                                                       : prop->s2i[0].str;
                                 break;
+                        }
 
                         case _RK_C_PTR:
                         case _RK_C_ALIAS:
