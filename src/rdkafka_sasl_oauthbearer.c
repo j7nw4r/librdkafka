@@ -841,16 +841,18 @@ static char *create_jws_compact_serialization(
         rd_snprintf(retval_jws, retval_size, "%s.", jose_header_encoded);
         jws_claims = retval_jws + strlen(retval_jws);
         {
-                rd_chariov_t raw={.ptr=claims_json,.size=strlen(claims_json)};
+                rd_chariov_t raw = {.ptr  = claims_json,
+                                    .size = strlen(claims_json)};
                 rd_chariov_t encoded;
-                rd_base64_encode(&raw,&encoded);
-                if(!encoded.ptr) {
-                        rd_free(claims_json);rd_free(retval_jws);
+                rd_base64_encode(&raw, &encoded);
+                if (!encoded.ptr) {
+                        rd_free(claims_json);
+                        rd_free(retval_jws);
                         rd_list_destroy(&scope);
                         return NULL;
                 }
-                encode_len=(int)encoded.size;
-                memcpy(jws_claims,encoded.ptr,encoded.size+1);
+                encode_len = (int)encoded.size;
+                memcpy(jws_claims, encoded.ptr, encoded.size + 1);
                 rd_free(encoded.ptr);
         }
         rd_free(claims_json);
@@ -953,9 +955,10 @@ static int rd_kafka_oauthbearer_unsecured_token0(
                         char *jws = create_jws_compact_serialization(
                             &parsed, now_wallclock_ms * 1000);
 
-                        if(!jws) {
-                                rd_snprintf(errstr,errstr_size,"Unable to encode token claims");
-                                r=-1;
+                        if (!jws) {
+                                rd_snprintf(errstr, errstr_size,
+                                            "Unable to encode token claims");
+                                r = -1;
                                 goto parsed_done;
                         }
                         extension_pair_count = rd_list_cnt(&parsed.extensions);

@@ -136,10 +136,11 @@ struct rd_kafka_property {
 #if WITH_TLS
 #define _UNSUPPORTED_SSL .unsupported = NULL
 #else
-#define _UNSUPPORTED_SSL .unsupported = "TLS backend not available at build time"
+#define _UNSUPPORTED_SSL                                                       \
+        .unsupported = "TLS backend not available at build time"
 #endif
 
-#if OPENSSL_VERSION_NUMBER >= 0x1000200fL && WITH_SSL &&              \
+#if OPENSSL_VERSION_NUMBER >= 0x1000200fL && WITH_SSL &&                       \
     !defined(LIBRESSL_VERSION_NUMBER)
 #define _UNSUPPORTED_OPENSSL_1_0_2 .unsupported = NULL
 #else
@@ -153,7 +154,7 @@ struct rd_kafka_property {
 #define _UNSUPPORTED_ENDPOINT_ID _UNSUPPORTED_OPENSSL_1_0_2
 #endif
 
-#if OPENSSL_VERSION_NUMBER >= 0x10100000 && WITH_SSL &&               \
+#if OPENSSL_VERSION_NUMBER >= 0x10100000 && WITH_SSL &&                        \
     !defined(LIBRESSL_VERSION_NUMBER)
 #define _UNSUPPORTED_OPENSSL_1_1_0 .unsupported = NULL
 #else
@@ -238,12 +239,14 @@ struct rd_kafka_property {
 #if WITH_SASL_SCRAM
 #define _UNSUPPORTED_SCRAM .unsupported = NULL
 #else
-#define _UNSUPPORTED_SCRAM .unsupported = "SCRAM crypto backend not available at build time"
+#define _UNSUPPORTED_SCRAM                                                     \
+        .unsupported = "SCRAM crypto backend not available at build time"
 #endif
 #if WITH_SASL_OAUTHBEARER
 #define _UNSUPPORTED_OAUTHBEARER .unsupported = NULL
 #else
-#define _UNSUPPORTED_OAUTHBEARER .unsupported = "OAuth bearer support not available at build time"
+#define _UNSUPPORTED_OAUTHBEARER                                               \
+        .unsupported = "OAuth bearer support not available at build time"
 #endif
 
 

@@ -98,13 +98,15 @@ static rd_bool_t rd_rand_bytes_by_rand_s(unsigned char *buf, int num) {
 rd_bool_t rd_rand_bytes(unsigned char *buf, unsigned int num) {
 #if WITH_CRYPTO
         /* A selected provider's failure must not silently change the source. */
-        return rd_kafka_crypto_random(buf,num)==0;
+        return rd_kafka_crypto_random(buf, num) == 0;
 #else
 #if HAVE_GETENTROPY
-        while(num) {
-                size_t chunk=RD_MIN((size_t)num,(size_t)256);
-                if(getentropy(buf,chunk))return rd_false;
-                buf+=chunk;num-=(unsigned int)chunk;
+        while (num) {
+                size_t chunk = RD_MIN((size_t)num, (size_t)256);
+                if (getentropy(buf, chunk))
+                        return rd_false;
+                buf += chunk;
+                num -= (unsigned int)chunk;
         }
         return rd_true;
 #endif

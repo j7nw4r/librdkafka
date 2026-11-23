@@ -85,12 +85,14 @@ static void rd_kafka_sasl_scram_close(rd_kafka_transport_t *rktrans) {
  */
 static int rd_kafka_sasl_scram_generate_nonce(rd_chariov_t *dst) {
         unsigned char bytes[24];
-        rd_chariov_t raw = {.ptr=(char*)bytes,.size=sizeof(bytes)};
-        if (rd_kafka_crypto_random(bytes,sizeof(bytes))) return -1;
-        dst->ptr=rd_base64_encode_str_urlsafe(&raw);
-        rd_kafka_crypto_wipe(bytes,sizeof(bytes));
-        if(!dst->ptr)return -1;
-        dst->size=strlen(dst->ptr);
+        rd_chariov_t raw = {.ptr = (char *)bytes, .size = sizeof(bytes)};
+        if (rd_kafka_crypto_random(bytes, sizeof(bytes)))
+                return -1;
+        dst->ptr = rd_base64_encode_str_urlsafe(&raw);
+        rd_kafka_crypto_wipe(bytes, sizeof(bytes));
+        if (!dst->ptr)
+                return -1;
+        dst->size = strlen(dst->ptr);
         return 0;
 }
 
@@ -149,10 +151,11 @@ static int rd_kafka_sasl_scram_H(rd_kafka_transport_t *rktrans,
                                  const rd_chariov_t *str,
                                  rd_chariov_t *out) {
 
-        rd_kafka_conf_t *conf=&rktrans->rktrans_rkb->rkb_rk->rk_conf;
-        if(rd_kafka_crypto_digest(conf->sasl.scram_hash,str->ptr,str->size,
-                                  (unsigned char*)out->ptr))return -1;
-        out->size=conf->sasl.scram_H_size;
+        rd_kafka_conf_t *conf = &rktrans->rktrans_rkb->rkb_rk->rk_conf;
+        if (rd_kafka_crypto_digest(conf->sasl.scram_hash, str->ptr, str->size,
+                                   (unsigned char *)out->ptr))
+                return -1;
+        out->size = conf->sasl.scram_H_size;
         return 0;
 }
 
@@ -165,17 +168,20 @@ static int rd_kafka_sasl_scram_HMAC(rd_kafka_transport_t *rktrans,
                                     const rd_chariov_t *key,
                                     const rd_chariov_t *str,
                                     rd_chariov_t *out) {
-        rd_kafka_conf_t *conf=&rktrans->rktrans_rkb->rkb_rk->rk_conf;
-        if(rd_kafka_crypto_hmac(conf->sasl.scram_hash,key->ptr,key->size,
-                                str->ptr,str->size,(unsigned char*)out->ptr))return -1;
-        out->size=conf->sasl.scram_H_size;
+        rd_kafka_conf_t *conf = &rktrans->rktrans_rkb->rkb_rk->rk_conf;
+        if (rd_kafka_crypto_hmac(conf->sasl.scram_hash, key->ptr, key->size,
+                                 str->ptr, str->size,
+                                 (unsigned char *)out->ptr))
+                return -1;
+        out->size = conf->sasl.scram_H_size;
         return 0;
 }
 
 /**
  * @brief Perform \p itcnt iterations of HMAC() on the given buffer \p in
  *        using \p salt, writing the output into \p out which must be
- *        at least RD_KAFKA_CRYPTO_MAX_DIGEST_SIZE. Actual size is updated in \p *outsize.
+ *        at least RD_KAFKA_CRYPTO_MAX_DIGEST_SIZE. Actual size is updated in \p
+ * *outsize.
  * @returns 0 on success, else -1
  */
 static int rd_kafka_sasl_scram_Hi(rd_kafka_transport_t *rktrans,
@@ -183,11 +189,14 @@ static int rd_kafka_sasl_scram_Hi(rd_kafka_transport_t *rktrans,
                                   const rd_chariov_t *salt,
                                   int itcnt,
                                   rd_chariov_t *out) {
-        rd_kafka_conf_t *conf=&rktrans->rktrans_rkb->rkb_rk->rk_conf;
-        if(itcnt<=0||rd_kafka_crypto_pbkdf2(conf->sasl.scram_hash,in->ptr,in->size,
-                         salt->ptr,salt->size,(uint64_t)itcnt,
-                         (unsigned char*)out->ptr,conf->sasl.scram_H_size))return -1;
-        out->size=conf->sasl.scram_H_size;
+        rd_kafka_conf_t *conf = &rktrans->rktrans_rkb->rkb_rk->rk_conf;
+        if (itcnt <= 0 ||
+            rd_kafka_crypto_pbkdf2(conf->sasl.scram_hash, in->ptr, in->size,
+                                   salt->ptr, salt->size, (uint64_t)itcnt,
+                                   (unsigned char *)out->ptr,
+                                   conf->sasl.scram_H_size))
+                return -1;
+        out->size = conf->sasl.scram_H_size;
         return 0;
 }
 
@@ -271,18 +280,25 @@ static int rd_kafka_sasl_scram_build_client_final_message(
         struct rd_kafka_sasl_scram_state *state = rktrans->rktrans_sasl.state;
         rd_kafka_conf_t *conf        = &rktrans->rktrans_rkb->rkb_rk->rk_conf;
         rd_chariov_t SaslPassword    = RD_ZERO_INIT;
-        rd_chariov_t SaltedPassword  = {.ptr = rd_alloca(RD_KAFKA_CRYPTO_MAX_DIGEST_SIZE)};
-        rd_chariov_t ClientKey       = {.ptr = rd_alloca(RD_KAFKA_CRYPTO_MAX_DIGEST_SIZE)};
-        rd_chariov_t ServerKey       = {.ptr = rd_alloca(RD_KAFKA_CRYPTO_MAX_DIGEST_SIZE)};
-        rd_chariov_t StoredKey       = {.ptr = rd_alloca(RD_KAFKA_CRYPTO_MAX_DIGEST_SIZE)};
+        rd_chariov_t SaltedPassword  = {
+            .ptr = rd_alloca(RD_KAFKA_CRYPTO_MAX_DIGEST_SIZE)};
+        rd_chariov_t ClientKey = {
+            .ptr = rd_alloca(RD_KAFKA_CRYPTO_MAX_DIGEST_SIZE)};
+        rd_chariov_t ServerKey = {
+            .ptr = rd_alloca(RD_KAFKA_CRYPTO_MAX_DIGEST_SIZE)};
+        rd_chariov_t StoredKey = {
+            .ptr = rd_alloca(RD_KAFKA_CRYPTO_MAX_DIGEST_SIZE)};
         rd_chariov_t AuthMessage     = RD_ZERO_INIT;
-        rd_chariov_t ClientSignature = {.ptr = rd_alloca(RD_KAFKA_CRYPTO_MAX_DIGEST_SIZE)};
-        rd_chariov_t ServerSignature = {.ptr = rd_alloca(RD_KAFKA_CRYPTO_MAX_DIGEST_SIZE)};
+        rd_chariov_t ClientSignature = {
+            .ptr = rd_alloca(RD_KAFKA_CRYPTO_MAX_DIGEST_SIZE)};
+        rd_chariov_t ServerSignature = {
+            .ptr = rd_alloca(RD_KAFKA_CRYPTO_MAX_DIGEST_SIZE)};
         const rd_chariov_t ClientKeyVerbatim = {.ptr  = "Client Key",
                                                 .size = 10};
         const rd_chariov_t ServerKeyVerbatim = {.ptr  = "Server Key",
                                                 .size = 10};
-        rd_chariov_t ClientProof = {.ptr = rd_alloca(RD_KAFKA_CRYPTO_MAX_DIGEST_SIZE)};
+        rd_chariov_t ClientProof             = {
+            .ptr = rd_alloca(RD_KAFKA_CRYPTO_MAX_DIGEST_SIZE)};
         rd_chariov_t client_final_msg_wo_proof;
         char *ClientProofB64;
         int i;
@@ -591,7 +607,8 @@ rd_kafka_sasl_scram_build_client_first_message(rd_kafka_transport_t *rktrans,
         struct rd_kafka_sasl_scram_state *state = rktrans->rktrans_sasl.state;
         rd_kafka_conf_t *conf = &rktrans->rktrans_rkb->rkb_rk->rk_conf;
 
-        if(rd_kafka_sasl_scram_generate_nonce(&state->cnonce))return -1;
+        if (rd_kafka_sasl_scram_generate_nonce(&state->cnonce))
+                return -1;
 
         mtx_lock(&conf->sasl.lock);
         sasl_username = rd_kafka_sasl_safe_string(conf->sasl.username);
@@ -640,8 +657,10 @@ static int rd_kafka_sasl_scram_fsm(rd_kafka_transport_t *rktrans,
         case RD_KAFKA_SASL_SCRAM_STATE_CLIENT_FIRST_MESSAGE:
                 rd_dassert(!in); /* Not expecting any server-input */
 
-                if(rd_kafka_sasl_scram_build_client_first_message(rktrans,&out)) {
-                        rd_snprintf(errstr,errstr_size,"SCRAM security nonce generation failed");
+                if (rd_kafka_sasl_scram_build_client_first_message(rktrans,
+                                                                   &out)) {
+                        rd_snprintf(errstr, errstr_size,
+                                    "SCRAM security nonce generation failed");
                         return -1;
                 }
                 state->state = RD_KAFKA_SASL_SCRAM_STATE_SERVER_FIRST_MESSAGE;
@@ -739,13 +758,13 @@ static int rd_kafka_sasl_scram_conf_validate(rd_kafka_t *rk,
         }
 
         if (!strcmp(mech, "SCRAM-SHA-1")) {
-                rk->rk_conf.sasl.scram_hash = RD_KAFKA_CRYPTO_SHA1;
+                rk->rk_conf.sasl.scram_hash   = RD_KAFKA_CRYPTO_SHA1;
                 rk->rk_conf.sasl.scram_H_size = 20;
         } else if (!strcmp(mech, "SCRAM-SHA-256")) {
-                rk->rk_conf.sasl.scram_hash = RD_KAFKA_CRYPTO_SHA256;
+                rk->rk_conf.sasl.scram_hash   = RD_KAFKA_CRYPTO_SHA256;
                 rk->rk_conf.sasl.scram_H_size = 32;
         } else if (!strcmp(mech, "SCRAM-SHA-512")) {
-                rk->rk_conf.sasl.scram_hash = RD_KAFKA_CRYPTO_SHA512;
+                rk->rk_conf.sasl.scram_hash   = RD_KAFKA_CRYPTO_SHA512;
                 rk->rk_conf.sasl.scram_H_size = 64;
         } else {
                 rd_snprintf(errstr, errstr_size,
@@ -781,10 +800,12 @@ static int unittest_scram_nonce(void) {
         rd_chariov_t out1 = RD_ZERO_INIT;
         rd_chariov_t out2 = RD_ZERO_INIT;
 
-        RD_UT_ASSERT(!rd_kafka_sasl_scram_generate_nonce(&out1), "nonce RNG failure");
+        RD_UT_ASSERT(!rd_kafka_sasl_scram_generate_nonce(&out1),
+                     "nonce RNG failure");
         RD_UT_ASSERT(out1.size == 32, "Wrong size %d", (int)out1.size);
 
-        RD_UT_ASSERT(!rd_kafka_sasl_scram_generate_nonce(&out2), "nonce RNG failure");
+        RD_UT_ASSERT(!rd_kafka_sasl_scram_generate_nonce(&out2),
+                     "nonce RNG failure");
         RD_UT_ASSERT(out1.size == 32, "Wrong size %d", (int)out2.size);
 
         RD_UT_ASSERT(memcmp(out1.ptr, out2.ptr, out1.size) != 0,
