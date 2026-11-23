@@ -129,10 +129,17 @@ static int signatures(int argc, char **argv) {
                 if (!key)
                         fprintf(stderr, "key import: %s\n", error);
                 CHECK(key);
-                CHECK(!rd_kafka_crypto_sign(
-                    key, i ? RD_KAFKA_CRYPTO_ES256 : RD_KAFKA_CRYPTO_RS256,
-                    message, strlen(message), &sig, &size, error,
-                    sizeof(error)));
+                {
+                        int sign_result = rd_kafka_crypto_sign(
+                            key,
+                            i ? RD_KAFKA_CRYPTO_ES256 : RD_KAFKA_CRYPTO_RS256,
+                            message, strlen(message), &sig, &size, error,
+                            sizeof(error));
+                        if (sign_result)
+                                fprintf(stderr, "%s signing: %s\n",
+                                        i ? "ES256" : "RS256", error);
+                        CHECK(!sign_result);
+                }
                 CHECK(size == (i ? 64 : 256));
                 snprintf(path, sizeof(path), "%s/%s.bin", argv[3],
                          i ? "es256" : "rs256");

@@ -233,49 +233,85 @@ static int sign_data(rd_kafka_crypto_key_t *key,
         unsigned char hash[32], *sig = NULL;
         BCRYPT_PKCS1_PADDING_INFO padding = {BCRYPT_SHA256_ALGORITHM};
         void *pad                         = NULL;
-        int ok                            = 0;
-        if (NCryptGetProperty(key->key, NCRYPT_ALGORITHM_GROUP_PROPERTY,
-                              (PBYTE)group, sizeof(group), &got,
-                              0) != ERROR_SUCCESS)
+        const char *stage                 = "algorithm group";
+        SECURITY_STATUS status;
+        int ok = 0;
+        status = NCryptGetProperty(key->key, NCRYPT_ALGORITHM_GROUP_PROPERTY,
+                                   (PBYTE)group, sizeof(group), &got, 0);
+        if (status != ERROR_SUCCESS)
                 goto done;
         if (sigalg == RD_KAFKA_CRYPTO_RS256) {
-                if (wcscmp(group, NCRYPT_RSA_ALGORITHM_GROUP))
+                stage = "RSA algorithm compatibility";
+                if (wcscmp(group, NCRYPT_RSA_ALGORITHM_GROUP)) {
+                        status = NTE_BAD_ALGID;
                         goto done;
+                }
                 pad   = &padding;
                 flags = NCRYPT_PAD_PKCS1_FLAG;
         } else if (sigalg == RD_KAFKA_CRYPTO_ES256) {
-                if (wcscmp(group, NCRYPT_ECDSA_ALGORITHM_GROUP) ||
-                    NCryptGetProperty(key->key, NCRYPT_LENGTH_PROPERTY,
-                                      (PBYTE)&bits, sizeof(bits), &got,
-                                      0) != ERROR_SUCCESS ||
-                    bits != 256)
+                stage = "ECDSA algorithm compatibility";
+                if (wcscmp(group, NCRYPT_ECDSA_ALGORITHM_GROUP)) {
+                        status = NTE_BAD_ALGID;
                         goto done;
-                if (NCryptGetProperty(key->key, NCRYPT_ALGORITHM_PROPERTY,
-                                      (PBYTE)name, sizeof(name), &got,
-                                      0) != ERROR_SUCCESS)
+                }
+                stage  = "ECDSA key length";
+                status = NCryptGetProperty(key->key, NCRYPT_LENGTH_PROPERTY,
+                                           (PBYTE)&bits, sizeof(bits), &got, 0);
+                if (status != ERROR_SUCCESS)
+                        goto done;
+                if (bits != 256) {
+                        status = NTE_BAD_LEN;
+                        goto done;
+                }
+                stage  = "ECDSA algorithm name";
+                status = NCryptGetProperty(key->key, NCRYPT_ALGORITHM_PROPERTY,
+                                           (PBYTE)name, sizeof(name), &got, 0);
+                if (status != ERROR_SUCCESS)
                         goto done;
                 if (wcscmp(name, NCRYPT_ECDSA_P256_ALGORITHM)) {
                         WCHAR curve[64] = {0};
-                        if (NCryptGetProperty(key->key, L"ECCCurveName",
-                                              (PBYTE)curve, sizeof(curve), &got,
-                                              0) != ERROR_SUCCESS ||
-                            wcscmp(curve, L"nistP256"))
+                        stage           = "ECDSA named curve";
+                        status = NCryptGetProperty(key->key, L"ECCCurveName",
+                                                   (PBYTE)curve, sizeof(curve),
+                                                   &got, 0);
+                        if (status != ERROR_SUCCESS)
                                 goto done;
+                        if (wcscmp(curve, L"nistP256")) {
+                                status = NTE_BAD_ALGID;
+                                goto done;
+                        }
                 }
-        } else
+        } else {
+                stage  = "signature algorithm";
+                status = NTE_BAD_ALGID;
                 goto done;
-        if (digest(RD_KAFKA_CRYPTO_SHA256, data, n, hash))
+        }
+        stage = "SHA256 digest";
+        if (digest(RD_KAFKA_CRYPTO_SHA256, data, n, hash)) {
+                status = NTE_FAIL;
                 goto done;
-        if (NCryptSignHash(key->key, pad, hash, sizeof(hash), NULL, 0, &size,
-                           flags | NCRYPT_SILENT_FLAG) != ERROR_SUCCESS)
+        }
+        stage  = "signature size query";
+        status = NCryptSignHash(key->key, pad, hash, sizeof(hash), NULL, 0,
+                                &size, flags | NCRYPT_SILENT_FLAG);
+        if (status != ERROR_SUCCESS)
                 goto done;
         sig = malloc(size);
-        if (!sig ||
-            NCryptSignHash(key->key, pad, hash, sizeof(hash), sig, size, &size,
-                           flags | NCRYPT_SILENT_FLAG) != ERROR_SUCCESS)
+        if (!sig) {
+                stage  = "signature allocation";
+                status = NTE_NO_MEMORY;
                 goto done;
-        if (sigalg == RD_KAFKA_CRYPTO_ES256 && size != 64)
+        }
+        stage  = "signature generation";
+        status = NCryptSignHash(key->key, pad, hash, sizeof(hash), sig, size,
+                                &size, flags | NCRYPT_SILENT_FLAG);
+        if (status != ERROR_SUCCESS)
                 goto done;
+        if (sigalg == RD_KAFKA_CRYPTO_ES256 && size != 64) {
+                stage  = "JOSE signature length";
+                status = NTE_BAD_LEN;
+                goto done;
+        }
         *out = sig;
         *on  = size;
         sig  = NULL;
@@ -284,8 +320,8 @@ done:
         SecureZeroMemory(hash, sizeof(hash));
         free(sig);
         if (!ok)
-                snprintf(e, en,
-                         "BCrypt signing failed or algorithm/key mismatch");
+                snprintf(e, en, "BCrypt signing %s failed (0x%08lx)", stage,
+                         (unsigned long)(ULONG)status);
         return ok ? 0 : -1;
 }
 static void global_noop(void) {
