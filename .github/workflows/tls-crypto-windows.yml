@@ -39,6 +39,14 @@ jobs:
       - name: Exercise real Schannel TLS and mutual authentication
         if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
         run: python tests/schannel_transport.py --client build-static/Release/backend-schannel-test.exe
+      - name: Exercise native broker transport against real Java Kafka
+        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $env:JAVA_HOME = $env:JAVA_HOME_21_X64
+          $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
+          python tests/tls_backend/native_java_kafka.py --client build-static/Release/backend-kafka-client.exe --cache "$env:RUNNER_TEMP\kafka-native"
+          if ($LASTEXITCODE -ne 0) { throw 'Native Java Kafka acceptance failed' }
       - name: Configure shared artifact dependency audit
         id: configure_shared
         if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}

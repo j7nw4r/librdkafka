@@ -77,9 +77,6 @@
 #include "rdcrc32.h"
 #include "rdrand.h"
 #include "rdkafka_lz4.h"
-#if WITH_SSL
-#include <openssl/err.h>
-#endif
 #include "rdendian.h"
 #include "rdunittest.h"
 

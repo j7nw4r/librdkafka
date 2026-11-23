@@ -206,7 +206,7 @@ struct rd_kafka_property {
 #else
 #define _UNSUPPORTED_OIDC                                                      \
         .unsupported =                                                         \
-            "OAuth/OIDC depends on libcurl and OpenSSL which were not "        \
+            "OAuth/OIDC depends on libcurl and authentication crypto not "     \
             "available at build time"
 #endif
 
@@ -215,8 +215,8 @@ struct rd_kafka_property {
 #else
 #define _UNSUPPORTED_HTTPS                                                     \
         .unsupported =                                                         \
-            "HTTPS calls depend on libcurl and OpenSSL which were not "        \
-            "available at build time"
+            "HTTPS support with libcurl and authentication crypto was not "    \
+            "enabled at build time"
 #endif
 
 #ifdef _WIN32
@@ -395,7 +395,7 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
      "Indicates the builtin features for this build of librdkafka. "
      "An application can either query this value or attempt to set it "
      "with its list of required features to check for library support.",
-     0, 0x7fffffff, 0xffff,
+     0, 0x7fffffff, 0x7ffff,
      .s2i = {{0x1, "gzip", _UNSUPPORTED_ZLIB},
              {0x2, "snappy", _UNSUPPORTED_SNAPPY},
              {0x4, "ssl", _UNSUPPORTED_SSL},
@@ -416,6 +416,36 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
              {0x800, "sasl_oauthbearer", _UNSUPPORTED_OAUTHBEARER},
              {0x1000, "http", _UNSUPPORTED_HTTP},
              {0x2000, "oidc", _UNSUPPORTED_OIDC},
+             {0x4000, "tls_openssl"
+#if !WITH_SSL
+              ,
+              .unsupported = "OpenSSL TLS backend not available"
+#endif
+             },
+             {0x8000, "tls_schannel"
+#if !WITH_SCHANNEL
+              ,
+              .unsupported = "Schannel TLS backend not available"
+#endif
+             },
+             {0x10000, "crypto_openssl"
+#if !WITH_CRYPTO_OPENSSL
+              ,
+              .unsupported = "OpenSSL crypto backend not available"
+#endif
+             },
+             {0x20000, "crypto_bcrypt"
+#if !WITH_CRYPTO_BCRYPT
+              ,
+              .unsupported = "BCrypt crypto backend not available"
+#endif
+             },
+             {0x40000, "crypto"
+#if !WITH_CRYPTO
+              ,
+              .unsupported = "Authentication crypto backend not available"
+#endif
+             },
              {0, NULL}}},
     {_RK_GLOBAL, "client.id", _RK_C_STR, _RK(client_id_str),
      "Client identifier.", .sdef = "rdkafka"},
@@ -899,7 +929,8 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
     {_RK_GLOBAL, "ssl.schannel.certificate", _RK_C_STR,
      _RK(ssl.schannel_certificate),
      "Read-only Schannel client identity in the Windows MY certificate store. "
-     "Use CurrentUser/My/<SHA1-thumbprint> or LocalMachine/My/<SHA1-thumbprint>. "
+     "Use CurrentUser/My/<SHA1-thumbprint> or "
+     "LocalMachine/My/<SHA1-thumbprint>. "
      "The certificate must already have an accessible private key. "
      "Mutually exclusive with certificate, key and keystore inputs. "
      "The adapter does not import or persist this identity.",
@@ -1985,7 +2016,8 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
      "This property is not supported for share consumers.",
      0, 1000000, 0},
 
-    {0, /* End */}};
+    {0,
+     /* End */}};
 
 /**
  * @returns the property object for \p name in \p scope, or NULL if not found.

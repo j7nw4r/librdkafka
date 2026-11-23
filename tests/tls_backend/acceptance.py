@@ -23,8 +23,6 @@ if os.name == "posix" and not os.environ.get("DOCKER_HOST") and not Path("/var/r
         os.environ["DOCKER_HOST"] = f"unix://{candidate}"
 # The fixture owns teardown, including failed starts, without a privileged sidecar.
 os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
-import docker
-from testcontainers.core.container import DockerContainer
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -213,7 +211,46 @@ def run_purge(binary, conf, topic, proxy):
         raise
 
 
+def exercise_client(binary, root, proxy, config, good):
+    cases = [
+        ("wrong-hostname", {"bootstrap.servers": f"127.0.0.1:{proxy.port}"}),
+        ("unknown-ca", {"ssl.ca.location": client_path(root / "unknown-ca.crt")}),
+        ("missing-client", {"ssl.certificate.location": None, "ssl.key.location": None}),
+        ("invalid-client", {"ssl.certificate.location": client_path(root / "invalid-client.crt"),
+                            "ssl.key.location": client_path(root / "invalid-client.key")}),
+        ("expired-client", {"ssl.certificate.location": client_path(root / "expired-client.crt"),
+                            "ssl.key.location": client_path(root / "expired-client.key")}),
+    ]
+    for name, changes in cases:
+        result = run_client(binary, "probe", config(name, **changes))
+        require(result.returncode == 3, f"{name}: {result.returncode}\n{result.stdout}{result.stderr}")
+        print(f"PASS {binary.name}: {name} rejected", flush=True)
+    for op, faults in (("roundtrip", False), ("roundtrip", True), ("acks0", True)):
+        proxy.fragment = faults
+        proxy.disconnect()
+        proxy.bytes_forwarded = 0
+        proxy.dropped = False
+        proxy.drop_after = 300000 if faults and op != "acks0" else None
+        topic = "tls-" + uuid.uuid4().hex
+        result = run_client(binary, op, good, topic)
+        require(result.returncode == 0, result.stdout + result.stderr)
+        if proxy.drop_after:
+            require(proxy.dropped, "disconnect injection was not exercised")
+        print(f"PASS {binary.name}: {op} faults={faults}: {result.stdout.strip()}", flush=True)
+    proxy.disconnect()
+    proxy.drop_after = None
+    proxy.bytes_forwarded = 0
+    proxy.pause_after = 100000
+    proxy.pause_hit = False
+    result = run_purge(binary, good, "tls-" + uuid.uuid4().hex, proxy)
+    require(result.returncode == 0, result.stdout + result.stderr)
+    require(proxy.pause_hit, "backpressure cancellation injection was not exercised")
+    proxy.pause_after = None
+    print(f"PASS {binary.name}: {result.stdout.strip()}", flush=True)
+
+
 def suite(binary, root, expired_server=False):
+    from testcontainers.core.container import DockerContainer
     proxy = FaultProxy()
     # Start an idle container first, then resolve its dynamically assigned port and
     # upload config. No bound-port guessing or fixed host ports are required.
@@ -285,41 +322,7 @@ ssl.client.auth=required
             require(result.returncode == 3, result.stdout + result.stderr)
             print(f"PASS {binary.name}: expired server rejected", flush=True)
             return
-        cases = [
-            ("wrong-hostname", {"bootstrap.servers": f"127.0.0.1:{proxy.port}"}),
-            ("unknown-ca", {"ssl.ca.location": client_path(root / "unknown-ca.crt")}),
-            ("missing-client", {"ssl.certificate.location": None, "ssl.key.location": None}),
-            ("invalid-client", {"ssl.certificate.location": client_path(root / "invalid-client.crt"),
-                                "ssl.key.location": client_path(root / "invalid-client.key")}),
-            ("expired-client", {"ssl.certificate.location": client_path(root / "expired-client.crt"),
-                                "ssl.key.location": client_path(root / "expired-client.key")}),
-        ]
-        for name, changes in cases:
-            result = run_client(binary, "probe", config(name, **changes))
-            require(result.returncode == 3, f"{name}: {result.returncode}\n{result.stdout}{result.stderr}")
-            print(f"PASS {binary.name}: {name} rejected", flush=True)
-        for op, faults in (("roundtrip", False), ("roundtrip", True), ("acks0", True)):
-            proxy.fragment = faults
-            proxy.disconnect()
-            proxy.bytes_forwarded = 0
-            proxy.dropped = False
-            proxy.drop_after = 300000 if faults and op != "acks0" else None
-            topic = "tls-" + uuid.uuid4().hex
-            result = run_client(binary, op, good, topic)
-            require(result.returncode == 0, result.stdout + result.stderr)
-            if proxy.drop_after:
-                require(proxy.dropped, "disconnect injection was not exercised")
-            print(f"PASS {binary.name}: {op} faults={faults}: {result.stdout.strip()}", flush=True)
-        proxy.disconnect()
-        proxy.drop_after = None
-        proxy.bytes_forwarded = 0
-        proxy.pause_after = 100000
-        proxy.pause_hit = False
-        result = run_purge(binary, good, "tls-" + uuid.uuid4().hex, proxy)
-        require(result.returncode == 0, result.stdout + result.stderr)
-        require(proxy.pause_hit, "backpressure cancellation injection was not exercised")
-        proxy.pause_after = None
-        print(f"PASS {binary.name}: {result.stdout.strip()}", flush=True)
+        exercise_client(binary, root, proxy, config, good)
     except BaseException:
         with contextlib.suppress(Exception):
             out, err = container.get_logs()
@@ -352,6 +355,7 @@ def main():
     global RUNNER
     RUNNER = shlex.split(args.runner)
     try:
+        import docker
         runtime = docker.from_env(timeout=10)
         runtime.ping()
         print("Container runtime:", runtime.version().get("Version"), flush=True)
