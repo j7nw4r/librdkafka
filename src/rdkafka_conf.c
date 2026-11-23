@@ -896,6 +896,17 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
     {_RK_GLOBAL, "ssl.certificate.pem", _RK_C_STR, _RK(ssl.cert_pem),
      "Client's public key string (PEM format) used for authentication.",
      _UNSUPPORTED_SSL},
+    {_RK_GLOBAL, "ssl.schannel.certificate", _RK_C_STR,
+     _RK(ssl.schannel_certificate),
+     "Read-only Schannel client identity in the Windows MY certificate store. "
+     "Use CurrentUser/My/<SHA1-thumbprint> or LocalMachine/My/<SHA1-thumbprint>. "
+     "The certificate must already have an accessible private key. "
+     "Mutually exclusive with certificate, key and keystore inputs. "
+     "The adapter does not import or persist this identity.",
+#if !WITH_SCHANNEL
+     .unsupported = "Schannel TLS backend not available at build time"
+#endif
+    },
     {_RK_GLOBAL, "ssl_certificate", _RK_C_INTERNAL, _RK(ssl.key),
      "Client's public key as set by rd_kafka_conf_set_ssl_cert()",
      .dtor = rd_kafka_conf_cert_dtor, .copy = rd_kafka_conf_cert_copy,

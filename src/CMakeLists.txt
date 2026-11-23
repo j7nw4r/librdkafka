@@ -275,7 +275,7 @@ if(WITH_CRYPTO_OPENSSL AND NOT WITH_SSL)
   target_link_libraries(rdkafka PUBLIC OpenSSL::Crypto)
 endif()
 if(WITH_SCHANNEL OR WITH_CRYPTO_BCRYPT)
-  target_link_libraries(rdkafka PUBLIC secur32 crypt32 ncrypt bcrypt)
+  target_link_libraries(rdkafka PUBLIC secur32 crypt32 bcrypt ncrypt)
 endif()
 
 if(LINK_ATOMIC)

@@ -127,15 +127,15 @@ void foo (void) {
     mkl_allvar_set WITH_TLS WITH_TLS "$WITH_SSL"
     mkl_allvar_set WITH_CRYPTO WITH_CRYPTO n
     if [[ "$tls_backend" == schannel ]]; then
-      mkl_compile_check schannel WITH_SCHANNEL fail CC "-lsecur32 -lcrypt32 -lncrypt -lbcrypt" '
+      mkl_compile_check schannel WITH_SCHANNEL fail CC "-lsecur32 -lcrypt32 -lbcrypt -lncrypt" '
 #define SECURITY_WIN32
 #include <windows.h>
 #include <security.h>
 #include <schannel.h>
 int main(void) { CredHandle c; TimeStamp t; return AcquireCredentialsHandleA(NULL, UNISP_NAME_A, SECPKG_CRED_OUTBOUND, NULL, NULL, NULL, NULL, &c, &t); }'
       mkl_allvar_set WITH_TLS WITH_TLS y
-      mkl_mkvar_append schannel LIBS "-lsecur32 -lcrypt32 -lncrypt -lbcrypt"
-      mkl_mkvar_append schannel MKL_PKGCONFIG_LIBS_PRIVATE "-lsecur32 -lcrypt32 -lncrypt -lbcrypt"
+      mkl_mkvar_append schannel LIBS "-lsecur32 -lcrypt32 -lbcrypt -lncrypt"
+      mkl_mkvar_append schannel MKL_PKGCONFIG_LIBS_PRIVATE "-lsecur32 -lcrypt32 -lbcrypt -lncrypt"
     fi
     case "$crypto_backend" in
       openssl)

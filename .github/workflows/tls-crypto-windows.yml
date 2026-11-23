@@ -69,6 +69,11 @@ jobs:
           foreach ($module in @('bcrypt.dll','ncrypt.dll','crypt32.dll','secur32.dll')) {
             if ($imports -notmatch [regex]::Escape($module)) { throw "Required Windows module missing: $module" }
           }
+          $functions = & $dumpbin.FullName /IMPORTS $dll.FullName | Out-String
+          if ($LASTEXITCODE -ne 0) { throw 'Function import audit failed' }
+          foreach ($function in @('BCryptGenRandom','BCryptDeriveKeyPBKDF2','BCryptCreateHash','NCryptSignHash','InitializeSecurityContextA')) {
+            if ($functions -notmatch [regex]::Escape($function)) { throw "Required backend function missing: $function" }
+          }
           $maps = Get-ChildItem build-shared -Recurse -Filter '*.map'
           if (!$maps) { throw 'Native link map missing' }
           foreach ($map in $maps) {
