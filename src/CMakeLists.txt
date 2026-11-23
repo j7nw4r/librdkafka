@@ -40,6 +40,8 @@ set(
     rdkafka_timer.c
     rdkafka_topic.c
     rdkafka_transport.c
+    rdkafka_tls.c
+    rdkafka_crypto.c
     rdkafka_interceptor.c
     rdkafka_header.c
     rdkafka_admin.c
@@ -86,6 +88,15 @@ set(
 
 if(WITH_SSL)
   list(APPEND sources rdkafka_ssl.c)
+endif()
+if(WITH_SCHANNEL)
+  list(APPEND sources rdkafka_schannel.c)
+endif()
+if(WITH_CRYPTO_OPENSSL)
+  list(APPEND sources rdkafka_crypto_openssl.c)
+endif()
+if(WITH_CRYPTO_BCRYPT)
+  list(APPEND sources rdkafka_crypto_bcrypt.c)
 endif()
 
 if(WITH_CURL)
@@ -141,6 +152,13 @@ endif()
 # Define flags with cmake instead of by defining them on win32_config.h
 if(WITHOUT_WIN32_CONFIG)
   list(APPEND rdkafka_compile_definitions WITHOUT_WIN32_CONFIG)
+  foreach(backend_flag WITH_TLS WITH_SCHANNEL WITH_CRYPTO WITH_CRYPTO_OPENSSL WITH_CRYPTO_BCRYPT)
+    if(${backend_flag})
+      list(APPEND rdkafka_compile_definitions ${backend_flag}=1)
+    else()
+      list(APPEND rdkafka_compile_definitions ${backend_flag}=0)
+    endif()
+  endforeach()
   if(WITH_SSL)
     list(APPEND rdkafka_compile_definitions WITH_SSL=1)
   else()
@@ -253,6 +271,13 @@ if(WITH_SSL)
   endif()
 endif()
 
+if(WITH_CRYPTO_OPENSSL AND NOT WITH_SSL)
+  target_link_libraries(rdkafka PUBLIC OpenSSL::Crypto)
+endif()
+if(WITH_SCHANNEL OR WITH_CRYPTO_BCRYPT)
+  target_link_libraries(rdkafka PUBLIC secur32 crypt32 ncrypt bcrypt)
+endif()
+
 if(LINK_ATOMIC)
   target_link_libraries(rdkafka PUBLIC "-latomic")
 endif()
@@ -320,6 +345,8 @@ if(NOT RDKAFKA_BUILD_STATIC)
 
   if(WITH_SSL)
     string(APPEND PKG_CONFIG_REQUIRES_PRIVATE "libcrypto libssl ")
+  elseif(WITH_CRYPTO_OPENSSL)
+    string(APPEND PKG_CONFIG_REQUIRES_PRIVATE "libcrypto ")
   endif()
 
   if(WITH_SASL_CYRUS)

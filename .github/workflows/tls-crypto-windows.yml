@@ -1,0 +1,69 @@
+name: Native Windows TLS and crypto backends
+on:
+  push:
+    branches: [feat/tls-crypto-backends]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: tls-crypto-native-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  schannel-bcrypt:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.13'
+      - name: Install test-only certificate tooling
+        run: python -m pip install cryptography==50.0.2
+      - name: Configure native static backend tests
+        run: >-
+          cmake -S . -B build-static -A x64
+          -DRDKAFKA_TLS_BACKEND=schannel -DRDKAFKA_CRYPTO_BACKEND=bcrypt
+          -DRDKAFKA_BUILD_STATIC=ON -DRDKAFKA_BUILD_BACKEND_TESTS=ON
+          -DRDKAFKA_BUILD_TESTS=OFF -DRDKAFKA_BUILD_EXAMPLES=OFF
+          -DWITH_CURL=OFF -DWITH_ZLIB=OFF -DWITH_ZSTD=OFF
+          -DWITH_HDRHISTOGRAM=OFF -DENABLE_LZ4_EXT=OFF -DWITH_SASL=ON
+      - name: Build native static backend tests
+        run: cmake --build build-static --config Release --parallel 4
+      - name: Exercise BCrypt primitives and verify JOSE signatures independently
+        run: python tests/crypto/run_vectors.py --binary build-static/Release/backend-crypto-test.exe
+      - name: Exercise public certificate setter lifetime and encodings
+        run: python tests/tls_backend/run_cert_buffers.py --binary build-static/Release/backend-cert-test.exe
+      - name: Exercise real Schannel TLS and mutual authentication
+        run: python tests/schannel_transport.py --client build-static/Release/backend-schannel-test.exe
+      - name: Configure shared artifact dependency audit
+        run: >-
+          cmake -S . -B build-shared -A x64
+          -DRDKAFKA_TLS_BACKEND=schannel -DRDKAFKA_CRYPTO_BACKEND=bcrypt
+          -DRDKAFKA_BUILD_STATIC=OFF -DRDKAFKA_BUILD_TESTS=OFF
+          -DRDKAFKA_BUILD_EXAMPLES=OFF -DWITH_CURL=OFF -DWITH_ZLIB=OFF
+          -DWITH_ZSTD=OFF -DWITH_HDRHISTOGRAM=OFF -DENABLE_LZ4_EXT=OFF
+          -DWITH_SASL=ON -DCMAKE_SHARED_LINKER_FLAGS=/MAP
+      - name: Build shared Schannel and BCrypt artifact
+        run: cmake --build build-shared --config Release --target rdkafka --parallel 4
+      - name: Verify Windows crypto imports and absence of OpenSSL
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products '*' -property installationPath
+          $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -Last 1
+          $dll = Get-ChildItem build-shared -Recurse -Filter '*rdkafka.dll' | Select-Object -First 1
+          if (!$dumpbin -or !$dll) { throw 'Dependency audit tools or artifact missing' }
+          $imports = & $dumpbin.FullName /DEPENDENTS $dll.FullName | Out-String
+          Write-Output $imports
+          if ($LASTEXITCODE -ne 0) { throw 'dumpbin failed' }
+          if ($imports -match 'libssl|libcrypto|ssleay|libeay|openssl') { throw 'Unexpected OpenSSL dependency' }
+          foreach ($module in @('bcrypt.dll','ncrypt.dll','crypt32.dll','secur32.dll')) {
+            if ($imports -notmatch [regex]::Escape($module)) { throw "Required Windows module missing: $module" }
+          }
+          $maps = Get-ChildItem build-shared -Recurse -Filter '*.map'
+          if (!$maps) { throw 'Native link map missing' }
+          foreach ($map in $maps) {
+            if ((Get-Content $map.FullName -Raw) -match '(libssl|libcrypto|ssleay|libeay)\.(lib|a)') {
+              throw 'Unexpected static OpenSSL input in link map'
+            }
+          }

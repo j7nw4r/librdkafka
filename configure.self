@@ -47,6 +47,9 @@ mkl_toggle_option "Feature" ENABLE_C11THREADS "--enable-c11threads" "Enable dete
 mkl_toggle_option "Feature" ENABLE_SYSLOG "--enable-syslog" "Enable logging to syslog" "y"
 
 
+mkl_option "Feature" RDKAFKA_TLS_BACKEND "--with-tls-backend" "Broker TLS backend (openssl, schannel, none; empty preserves --enable-ssl)" ""
+mkl_option "Feature" RDKAFKA_CRYPTO_BACKEND "--with-crypto-backend" "Authentication crypto backend (openssl, bcrypt, none; empty follows TLS)" ""
+
 function checks {
 
     # -lrt is needed on linux for clock_gettime: link it if it exists.
@@ -103,7 +106,55 @@ void foo (void) {
 
     # optional libs
     mkl_check "zlib"
-    mkl_check "libssl"
+    local tls_backend="$RDKAFKA_TLS_BACKEND"
+    local crypto_backend="$RDKAFKA_CRYPTO_BACKEND"
+    case "$tls_backend" in
+      ""|openssl) mkl_check "libssl" ;;
+      schannel|none) mkl_allvar_set WITH_SSL WITH_SSL n ;;
+      *) mkl_err "Unknown TLS backend: $tls_backend"; exit 1 ;;
+    esac
+    if [[ "$tls_backend" == openssl && "$WITH_SSL" != y ]]; then
+      mkl_err "OpenSSL TLS was explicitly selected but is unavailable"; exit 1
+    fi
+    if [[ -z "$crypto_backend" ]]; then
+      if [[ "$tls_backend" == schannel ]]; then crypto_backend=bcrypt
+      elif [[ "$WITH_SSL" == y ]]; then crypto_backend=openssl
+      else crypto_backend=none; fi
+    fi
+    mkl_allvar_set WITH_SCHANNEL WITH_SCHANNEL n
+    mkl_allvar_set WITH_CRYPTO_OPENSSL WITH_CRYPTO_OPENSSL n
+    mkl_allvar_set WITH_CRYPTO_BCRYPT WITH_CRYPTO_BCRYPT n
+    mkl_allvar_set WITH_TLS WITH_TLS "$WITH_SSL"
+    mkl_allvar_set WITH_CRYPTO WITH_CRYPTO n
+    if [[ "$tls_backend" == schannel ]]; then
+      mkl_compile_check schannel WITH_SCHANNEL fail CC "-lsecur32 -lcrypt32 -lncrypt -lbcrypt" '
+#define SECURITY_WIN32
+#include <windows.h>
+#include <security.h>
+#include <schannel.h>
+int main(void) { CredHandle c; TimeStamp t; return AcquireCredentialsHandleA(NULL, UNISP_NAME_A, SECPKG_CRED_OUTBOUND, NULL, NULL, NULL, NULL, &c, &t); }'
+      mkl_allvar_set WITH_TLS WITH_TLS y
+      mkl_mkvar_append schannel LIBS "-lsecur32 -lcrypt32 -lncrypt -lbcrypt"
+      mkl_mkvar_append schannel MKL_PKGCONFIG_LIBS_PRIVATE "-lsecur32 -lcrypt32 -lncrypt -lbcrypt"
+    fi
+    case "$crypto_backend" in
+      openssl)
+        if [[ "$WITH_SSL" != y ]]; then
+          mkl_lib_check libcrypto WITH_CRYPTO_OPENSSL fail CC "-lcrypto" '#include <openssl/evp.h>'
+        fi
+        mkl_allvar_set WITH_CRYPTO_OPENSSL WITH_CRYPTO_OPENSSL y
+        mkl_allvar_set WITH_CRYPTO WITH_CRYPTO y ;;
+      bcrypt)
+        mkl_compile_check bcrypt WITH_CRYPTO_BCRYPT fail CC "-lbcrypt -lncrypt -lcrypt32" '
+#include <windows.h>
+#include <bcrypt.h>
+int main(void) { unsigned char b; return BCryptGenRandom(NULL, &b, 1, BCRYPT_USE_SYSTEM_PREFERRED_RNG); }'
+        mkl_allvar_set WITH_CRYPTO WITH_CRYPTO y
+        mkl_mkvar_append bcrypt LIBS "-lbcrypt -lncrypt -lcrypt32"
+        mkl_mkvar_append bcrypt MKL_PKGCONFIG_LIBS_PRIVATE "-lbcrypt -lncrypt -lcrypt32" ;;
+      none) ;;
+      *) mkl_err "Unknown crypto backend: $crypto_backend"; exit 1 ;;
+    esac
     mkl_check "libsasl2"
     mkl_check "libzstd"
     mkl_check "libcurl"
@@ -140,16 +191,12 @@ void foo (void) {
     # Enable sockem (tests)
     mkl_allvar_set WITH_SOCKEM WITH_SOCKEM y
 
-    if [[ "$WITH_SSL" == "y" ]]; then
-        # SASL SCRAM requires base64 encoding from OpenSSL
+    if [[ "$WITH_CRYPTO" == y ]]; then
         mkl_allvar_set WITH_SASL_SCRAM WITH_SASL_SCRAM y
-        # SASL OAUTHBEARER's default unsecured JWS implementation
-        # requires base64 encoding from OpenSSL
-        mkl_allvar_set WITH_SASL_OAUTHBEARER WITH_SASL_OAUTHBEARER y
-
-        if [[ $WITH_CURL == y ]]; then
-            mkl_allvar_set WITH_OAUTHBEARER_OIDC WITH_OAUTHBEARER_OIDC y
-        fi
+    fi
+    mkl_allvar_set WITH_SASL_OAUTHBEARER WITH_SASL_OAUTHBEARER y
+    if [[ "$WITH_CRYPTO" == y && "$WITH_CURL" == y ]]; then
+        mkl_allvar_set WITH_OAUTHBEARER_OIDC WITH_OAUTHBEARER_OIDC y
     fi
 
     # CRC32C: check for crc32 instruction support.

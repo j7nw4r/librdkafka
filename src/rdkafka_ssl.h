@@ -54,13 +54,6 @@ void rd_kafka_ssl_init(void);
 
 const char *rd_kafka_ssl_last_error_str(void);
 
-int rd_kafka_ssl_hmac(rd_kafka_broker_t *rkb,
-                      const EVP_MD *evp,
-                      const rd_chariov_t *in,
-                      const rd_chariov_t *salt,
-                      int itcnt,
-                      rd_chariov_t *out);
-
 int rd_kafka_ssl_read_cert_chain_from_BIO(BIO *in,
                                           STACK_OF(X509) * chainp,
                                           pem_password_cb *password_cb,

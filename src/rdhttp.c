@@ -219,55 +219,62 @@ rd_http_ssl_ctx_function(CURL *curl, void *sslctx, void *userptr) {
         return CURLE_SSL_CACERT_BADFILE;
 }
 
-static void rd_http_ssl_configure(rd_kafka_t *rk, CURL *hreq_curl) {
-        rd_bool_t force_probe =
-            !rd_strcmp(rk->rk_conf.https.ca_location, "probe");
+#endif /* WITH_SSL: native OpenSSL callback only */
 
+/* HTTP TLS is owned by libcurl, independently of the broker TLS backend.
+ * Never cast a Schannel/GnuTLS native context to SSL_CTX. Explicit trust
+ * configuration must either be applied successfully or fail initialization. */
+static CURLcode rd_http_ssl_configure(rd_kafka_t *rk, CURL *curl) {
+        rd_bool_t force_probe = !rd_strcmp(rk->rk_conf.https.ca_location, "probe");
+        const curl_version_info_data *version = curl_version_info(CURLVERSION_NOW);
+        rd_bool_t curl_openssl = version && version->ssl_version &&
+            !strncmp(version->ssl_version, "OpenSSL/", 8);
+        CURLcode result;
+#define SET_TRUST(option, value) do { \
+        result = curl_easy_setopt(curl, (option), (value)); \
+        if (result != CURLE_OK) return result; \
+} while (0)
         if (!force_probe && rk->rk_conf.https.ca_location) {
-                rd_bool_t is_dir;
-                rd_kafka_dbg(rk, SECURITY, "SSL",
-                             "Setting `https` CA certs from "
-                             "configured location: %s",
-                             rk->rk_conf.https.ca_location);
-                if (rd_file_stat(rk->rk_conf.https.ca_location, &is_dir)) {
-                        if (is_dir) {
-                                curl_easy_setopt(hreq_curl, CURLOPT_CAPATH,
-                                                 rk->rk_conf.https.ca_location);
-                                curl_easy_setopt(hreq_curl, CURLOPT_CAINFO,
-                                                 NULL);
-                        } else {
-                                curl_easy_setopt(hreq_curl, CURLOPT_CAPATH,
-                                                 NULL);
-                                curl_easy_setopt(hreq_curl, CURLOPT_CAINFO,
-                                                 rk->rk_conf.https.ca_location);
-                        }
-                } else {
-                        /* Path doesn't exist, don't set any trusted
-                         * certificate. */
-                        curl_easy_setopt(hreq_curl, CURLOPT_CAINFO, NULL);
-                        curl_easy_setopt(hreq_curl, CURLOPT_CAPATH, NULL);
-                }
-        } else if (!force_probe && rk->rk_conf.https.ca_pem) {
-#if CURL_AT_LEAST_VERSION(7, 77, 0)
-                struct curl_blob ca_blob = {
-                    .data  = rk->rk_conf.https.ca_pem,
-                    .len   = strlen(rk->rk_conf.https.ca_pem),
-                    .flags = CURL_BLOB_COPY};
-                rd_kafka_dbg(rk, SECURITY, "SSL",
-                             "Setting `https` CA certs from "
-                             "configured PEM string");
-                curl_easy_setopt(hreq_curl, CURLOPT_CAINFO_BLOB, &ca_blob);
-#endif
-                /* Only the blob should be set, no default paths. */
-                curl_easy_setopt(hreq_curl, CURLOPT_CAINFO, NULL);
-                curl_easy_setopt(hreq_curl, CURLOPT_CAPATH, NULL);
-        } else {
-                curl_easy_setopt(hreq_curl, CURLOPT_SSL_CTX_FUNCTION,
-                                 rd_http_ssl_ctx_function);
-                curl_easy_setopt(hreq_curl, CURLOPT_SSL_CTX_DATA, rk);
+                rd_bool_t directory;
+                if (!rd_file_stat(rk->rk_conf.https.ca_location, &directory))
+                        return CURLE_SSL_CACERT_BADFILE;
+                SET_TRUST(CURLOPT_CAINFO, NULL);
+                SET_TRUST(CURLOPT_CAPATH, NULL);
+                if (directory)
+                        SET_TRUST(CURLOPT_CAPATH, rk->rk_conf.https.ca_location);
+                else
+                        SET_TRUST(CURLOPT_CAINFO, rk->rk_conf.https.ca_location);
+                return CURLE_OK;
         }
-}
+        if (rk->rk_conf.https.ca_pem) {
+#if CURL_AT_LEAST_VERSION(7, 77, 0)
+                struct curl_blob blob = {
+                    .data = rk->rk_conf.https.ca_pem,
+                    .len = strlen(rk->rk_conf.https.ca_pem),
+                    .flags = CURL_BLOB_COPY};
+                SET_TRUST(CURLOPT_CAINFO, NULL);
+                SET_TRUST(CURLOPT_CAPATH, NULL);
+                SET_TRUST(CURLOPT_CAINFO_BLOB, &blob);
+                return CURLE_OK;
+#else
+                return CURLE_NOT_BUILT_IN;
 #endif
+        }
+#if WITH_SSL
+        if (curl_openssl) {
+                SET_TRUST(CURLOPT_SSL_CTX_FUNCTION, rd_http_ssl_ctx_function);
+                SET_TRUST(CURLOPT_SSL_CTX_DATA, rk);
+                return CURLE_OK;
+        }
+#else
+        (void)curl_openssl;
+#endif
+        if (force_probe)
+                return CURLE_NOT_BUILT_IN;
+        /* With no explicit trust request, preserve libcurl's native defaults. */
+        return CURLE_OK;
+#undef SET_TRUST
+}
 
 /**
  * @brief Check if the error returned from HTTP(S) is temporary or not.
@@ -324,9 +331,17 @@ rd_http_req_init(rd_kafka_t *rk, rd_http_req_t *hreq, const char *url) {
                          rd_http_req_write_cb);
         curl_easy_setopt(hreq->hreq_curl, CURLOPT_WRITEDATA, (void *)hreq);
 
-#if WITH_SSL
-        rd_http_ssl_configure(rk, hreq->hreq_curl);
-#endif
+        {
+                CURLcode result = rd_http_ssl_configure(rk, hreq->hreq_curl);
+                if (result != CURLE_OK) {
+                        rd_http_req_destroy(hreq);
+                        hreq->hreq_curl = NULL;
+                        hreq->hreq_buf = NULL;
+                        return rd_http_error_new(-1,
+                            "Could not apply HTTPS trust configuration: %s",
+                            curl_easy_strerror(result));
+                }
+        }
 
         return NULL;
 }
