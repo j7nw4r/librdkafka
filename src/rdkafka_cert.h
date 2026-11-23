@@ -48,6 +48,12 @@ typedef struct rd_kafka_cert_s {
         EVP_PKEY *pkey;         /**< Private key */
         X509_STORE *store;      /**< CA trusted certificates */
 #endif
+#if WITH_SCHANNEL
+        void *win_store; /**< Private in-memory certificate store. */
+        void *win_cert; /**< First certificate, independently referenced. */
+        uintptr_t win_key; /**< Ephemeral CNG key (private-key type). */
+        uintptr_t win_provider;
+#endif
 } rd_kafka_cert_t;
 
 void rd_kafka_conf_cert_dtor(int scope, void *pconf);

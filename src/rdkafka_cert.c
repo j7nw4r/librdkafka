@@ -41,6 +41,8 @@
 
 #include <openssl/x509.h>
 #include <openssl/evp.h>
+#include <openssl/err.h>
+#include <openssl/pkcs12.h>
 
 /**
  * @brief OpenSSL password query callback using a conf struct.
@@ -464,6 +466,173 @@ fail:
 #endif /* WITH_SSL */
 
 
+#if WITH_SCHANNEL
+#include "rdkafka_schannel.h"
+#define RD_KAFKA_SCHANNEL_CERT_LIMIT (16 * 1024 * 1024)
+
+static int rd_kafka_schannel_space(char c) {
+        return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+}
+
+int rd_kafka_schannel_add_certs(HCERTSTORE store, const void *data, size_t size,
+                               rd_kafka_cert_enc_t encoding,
+                               PCCERT_CONTEXT *first, char *errstr,
+                               size_t errstr_size) {
+        const char *begin = "-----BEGIN CERTIFICATE-----";
+        const char *end = "-----END CERTIFICATE-----";
+        char *text = NULL, *p;
+        int count = 0, ok = 0;
+        PCCERT_CONTEXT cert = NULL, stored = NULL;
+        if (first) *first = NULL;
+        if (!data || !size || size > RD_KAFKA_SCHANNEL_CERT_LIMIT)
+                goto fail;
+        if (encoding == RD_KAFKA_CERT_ENC_DER) {
+                cert = CertCreateCertificateContext(X509_ASN_ENCODING, data,
+                                                     (DWORD)size);
+                if (!cert || cert->cbCertEncoded != size ||
+                    !CertAddCertificateContextToStore(store, cert,
+                        CERT_STORE_ADD_ALWAYS, &stored)) goto fail;
+                if (first) *first = CertDuplicateCertificateContext(stored);
+                ok = 1;
+                goto done;
+        }
+        if (encoding != RD_KAFKA_CERT_ENC_PEM) goto fail;
+        text = rd_malloc(size + 1);
+        memcpy(text, data, size); text[size] = 0;
+        if (strlen(text) != size) goto fail;
+        p = text;
+        while (*p) {
+                char *finish;
+                BYTE *der;
+                DWORD der_size = 0;
+                size_t block;
+                while (rd_kafka_schannel_space(*p)) p++;
+                if (!*p) break;
+                if (strncmp(p, begin, strlen(begin))) goto fail;
+                finish = strstr(p + strlen(begin), end);
+                if (!finish) goto fail;
+                finish += strlen(end);
+                block = (size_t)(finish - p);
+                if (!CryptStringToBinaryA(p, (DWORD)block,
+                    CRYPT_STRING_BASE64HEADER, NULL, &der_size, NULL, NULL)) goto fail;
+                der = rd_malloc(der_size);
+                if (!CryptStringToBinaryA(p, (DWORD)block,
+                    CRYPT_STRING_BASE64HEADER, der, &der_size, NULL, NULL)) {
+                        rd_free(der); goto fail;
+                }
+                cert = CertCreateCertificateContext(X509_ASN_ENCODING, der, der_size);
+                rd_free(der);
+                if (!cert || !CertAddCertificateContextToStore(store, cert,
+                    CERT_STORE_ADD_ALWAYS, &stored)) goto fail;
+                if (!count && first) *first = CertDuplicateCertificateContext(stored);
+                CertFreeCertificateContext(stored); stored = NULL;
+                CertFreeCertificateContext(cert); cert = NULL;
+                count++; p = finish;
+        }
+        if (!count) goto fail;
+        ok = 1;
+        goto done;
+fail:
+        rd_snprintf(errstr, errstr_size,
+                    "Schannel rejected certificate encoding (PEM chain or DER required, max 16 MiB; error 0x%08lx)",
+                    (unsigned long)GetLastError());
+        if (first && *first) {
+                CertFreeCertificateContext(*first); *first = NULL;
+        }
+done:
+        if (stored) CertFreeCertificateContext(stored);
+        if (cert) CertFreeCertificateContext(cert);
+        rd_free(text);
+        return ok ? 0 : -1;
+}
+
+int rd_kafka_schannel_import_key(const void *data, size_t size,
+                                rd_kafka_cert_enc_t encoding,
+                                NCRYPT_PROV_HANDLE *provider,
+                                NCRYPT_KEY_HANDLE *key, char *errstr,
+                                size_t errstr_size) {
+        BYTE *der = NULL;
+        const BYTE *input = data;
+        DWORD input_size = (DWORD)size;
+        SECURITY_STATUS status = NTE_BAD_DATA;
+        *provider = 0; *key = 0;
+        if (!data || !size || size > RD_KAFKA_SCHANNEL_CERT_LIMIT) goto fail;
+        if (encoding == RD_KAFKA_CERT_ENC_PEM) {
+                char *text = rd_malloc(size + 1);
+                char *p;
+                memcpy(text, data, size); text[size] = 0; p = text;
+                while (rd_kafka_schannel_space(*p)) p++;
+                if (strlen(text) != size ||
+                    strncmp(p, "-----BEGIN PRIVATE KEY-----", 27) ||
+                    !CryptStringToBinaryA(p, (DWORD)strlen(p), CRYPT_STRING_BASE64HEADER,
+                                         NULL, &input_size, NULL, NULL)) {
+                        SecureZeroMemory(text, size); rd_free(text); goto fail;
+                }
+                der = rd_malloc(input_size);
+                if (!CryptStringToBinaryA(p, (DWORD)strlen(p), CRYPT_STRING_BASE64HEADER,
+                                          der, &input_size, NULL, NULL)) {
+                        SecureZeroMemory(text, size); rd_free(text); goto fail;
+                }
+                SecureZeroMemory(text, size); rd_free(text); input = der;
+        } else if (encoding != RD_KAFKA_CERT_ENC_DER) goto fail;
+        status = NCryptOpenStorageProvider(provider, MS_KEY_STORAGE_PROVIDER, 0);
+        if (status != ERROR_SUCCESS) goto fail;
+        status = NCryptImportKey(*provider, 0, NCRYPT_PKCS8_PRIVATE_KEY_BLOB,
+                                NULL, key, (PBYTE)input, input_size, NCRYPT_SILENT_FLAG);
+        if (status != ERROR_SUCCESS) goto fail;
+        if (der) { SecureZeroMemory(der, input_size); rd_free(der); }
+        return 0;
+fail:
+        if (der) { SecureZeroMemory(der, input_size); rd_free(der); }
+        if (*key) NCryptFreeObject(*key);
+        if (*provider) NCryptFreeObject(*provider);
+        *key = 0; *provider = 0;
+        rd_snprintf(errstr, errstr_size,
+                    "Schannel requires an unencrypted PKCS#8 private key (PEM/DER); CNG import failed 0x%08lx",
+                    (unsigned long)status);
+        return -1;
+}
+
+static void rd_kafka_cert_destroy(rd_kafka_cert_t *cert) {
+        if (rd_refcnt_sub(&cert->refcnt) > 0) return;
+        if (cert->win_cert) CertFreeCertificateContext(cert->win_cert);
+        if (cert->win_store) CertCloseStore(cert->win_store, 0);
+        if (cert->win_key) NCryptFreeObject((NCRYPT_HANDLE)cert->win_key);
+        if (cert->win_provider) NCryptFreeObject((NCRYPT_HANDLE)cert->win_provider);
+        rd_free(cert);
+}
+static rd_kafka_cert_t *rd_kafka_cert_dup(rd_kafka_cert_t *cert) {
+        rd_refcnt_add(&cert->refcnt); return cert;
+}
+static rd_kafka_cert_t *rd_kafka_cert_new(const rd_kafka_conf_t *conf,
+                                        rd_kafka_cert_type_t type,
+                                        rd_kafka_cert_enc_t encoding,
+                                        const void *buffer, size_t size,
+                                        char *errstr, size_t errstr_size) {
+        rd_kafka_cert_t *cert = rd_calloc(1, sizeof(*cert));
+        (void)conf;
+        cert->type = type; cert->encoding = encoding;
+        rd_refcnt_init(&cert->refcnt, 1);
+        if (type == RD_KAFKA_CERT_PRIVATE_KEY) {
+                NCRYPT_PROV_HANDLE provider;
+                NCRYPT_KEY_HANDLE key;
+                if (rd_kafka_schannel_import_key(buffer, size, encoding,
+                    &provider, &key, errstr, errstr_size) == -1) goto fail;
+                cert->win_provider = (uintptr_t)provider;
+                cert->win_key = (uintptr_t)key;
+        } else {
+                PCCERT_CONTEXT first = NULL;
+                cert->win_store = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0, 0, NULL);
+                if (!cert->win_store || rd_kafka_schannel_add_certs(cert->win_store,
+                    buffer, size, encoding, &first, errstr, errstr_size) == -1) goto fail;
+                cert->win_cert = (void *)first;
+        }
+        return cert;
+fail:
+        rd_kafka_cert_destroy(cert); return NULL;
+}
+#endif
+
 /**
  * @name Public API
  * @brief These public methods must be available regardless if
@@ -478,9 +647,9 @@ rd_kafka_conf_res_t rd_kafka_conf_set_ssl_cert(rd_kafka_conf_t *conf,
                                                size_t size,
                                                char *errstr,
                                                size_t errstr_size) {
-#if !WITH_SSL
+#if !WITH_TLS
         rd_snprintf(errstr, errstr_size,
-                    "librdkafka not built with OpenSSL support");
+                    "librdkafka not built with TLS support");
         return RD_KAFKA_CONF_INVALID;
 #else
         rd_kafka_cert_t *cert;
@@ -530,7 +699,7 @@ rd_kafka_conf_res_t rd_kafka_conf_set_ssl_cert(rd_kafka_conf_t *conf,
  * @brief Destructor called when configuration object is destroyed.
  */
 void rd_kafka_conf_cert_dtor(int scope, void *pconf) {
-#if WITH_SSL
+#if WITH_TLS
         rd_kafka_conf_t *conf = pconf;
         assert(scope == _RK_GLOBAL);
         if (conf->ssl.key) {
@@ -559,7 +728,7 @@ void rd_kafka_conf_cert_copy(int scope,
                              const void *srcptr,
                              size_t filter_cnt,
                              const char **filter) {
-#if WITH_SSL
+#if WITH_TLS
         rd_kafka_conf_t *dconf       = pdst;
         const rd_kafka_conf_t *sconf = psrc;
 
