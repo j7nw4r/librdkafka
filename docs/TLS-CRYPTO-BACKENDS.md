@@ -38,6 +38,11 @@ uses the W form). CI has no KDC, so a Kerberos round trip is not part of CI.
 The configure equivalents are `--with-tls-backend=openssl|schannel|none` and
 `--with-crypto-backend=openssl|bcrypt|none`. The existing Windows Visual Studio
 project retains its ordinary OpenSSL default; CMake provides backend selection.
+Without these options, configure keeps the legacy `--enable-ssl` and
+`--disable-ssl` behavior; `--disable-ssl` gives a build without TLS and without
+authentication crypto. The workflow runs configure with the flag sets that the
+`rdkafka-sys` crate uses, refuses a `WITH_*` define with a string value in
+`config.h`, and builds `src/librdkafka.a`.
 Linux configure selections were built and exercised. Windows configure/MinGW
 execution was not accepted by this matrix; use the tested Windows CMake path.
 Use a separate checkout for configure builds: its generated source-root

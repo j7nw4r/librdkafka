@@ -159,3 +159,53 @@ jobs:
           $env:TESTS = '0000,0004'
           ..\build-curl\tests\Release\test-runner.exe -l
           if ($LASTEXITCODE -ne 0) { throw 'Local tests with libcurl failed' }
+      - name: Configure libcurl without TLS or crypto backends
+        shell: pwsh
+        run: >-
+          cmake -S . -B build-curl-notls -A x64
+          "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          -DVCPKG_MANIFEST_MODE=OFF -DWITH_SSL=OFF -DWITH_SASL=OFF
+          -DRDKAFKA_BUILD_STATIC=ON -DRDKAFKA_BUILD_TESTS=ON
+          -DRDKAFKA_BUILD_EXAMPLES=OFF -DWITH_CURL=ON -DWITH_ZLIB=OFF
+          -DWITH_ZSTD=OFF -DWITH_HDRHISTOGRAM=OFF -DENABLE_LZ4_EXT=OFF
+      - name: Build and run local tests without TLS or crypto backends
+        shell: pwsh
+        run: |
+          cmake --build build-curl-notls --config Release --target test-runner --parallel 4
+          if ($LASTEXITCODE -ne 0) { throw 'Build without TLS failed' }
+          $env:PATH = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin;$env:PATH"
+          $env:TESTS = '0000,0004'
+          Push-Location tests
+          ..\build-curl-notls\tests\Release\test-runner.exe -l
+          $code = $LASTEXITCODE
+          Pop-Location
+          if ($code -ne 0) { throw 'Local tests without TLS failed' }
+  mklove-configure:
+    # rdkafka-sys builds librdkafka with ./configure and these flag sets.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        flags:
+          - ''
+          - --disable-ssl --disable-gssapi --disable-curl --disable-zstd --disable-lz4-ext
+          - --enable-ssl --enable-gssapi --disable-curl --disable-zstd --disable-lz4-ext
+          - --disable-ssl --disable-gssapi --disable-zstd --disable-lz4-ext
+          - --disable-ssl --disable-gssapi --disable-curl --enable-zstd --disable-lz4-ext
+          - --with-tls-backend=openssl --with-crypto-backend=none
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev libsasl2-dev libcurl4-openssl-dev libzstd-dev zlib1g-dev
+      - name: Configure
+        run: ./configure ${{ matrix.flags }}
+      - name: Refuse string-valued feature defines
+        run: |
+          if grep -E '^#define WITH_[A-Z0-9_]+ "' config.h; then
+            echo 'configure wrote a string value for a WITH_* define' >&2
+            exit 1
+          fi
+          grep -E '^#define WITH_(SSL|TLS|CRYPTO|CURL|OAUTHBEARER_OIDC|SASL_SCRAM) ' config.h || true
+      - name: Build the static library as rdkafka-sys does
+        run: make -j4 -C src librdkafka.a
