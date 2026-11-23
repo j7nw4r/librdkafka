@@ -60,6 +60,7 @@
 #include "rdkafka_offset.h"
 #include "rdkafka_telemetry.h"
 #include "rdkafka_transport.h"
+#include "rdkafka_crypto.h"
 #if WITH_TLS
 #include "rdkafka_tls.h"
 #endif
@@ -5180,6 +5181,7 @@ static int rd_kafka_broker_thread_main(void *arg) {
         rd_kafka_tls_thread_term();
 #endif
 
+        rd_kafka_crypto_thread_term();
         rd_kafka_interceptors_on_thread_exit(rk, RD_KAFKA_THREAD_BROKER);
 
         rd_atomic32_sub(&rd_kafka_thread_cnt_curr, 1);

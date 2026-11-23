@@ -28,14 +28,20 @@ jobs:
           -DWITH_CURL=OFF -DWITH_ZLIB=OFF -DWITH_ZSTD=OFF
           -DWITH_HDRHISTOGRAM=OFF -DENABLE_LZ4_EXT=OFF -DWITH_SASL=ON
       - name: Build native static backend tests
+        id: native_build
         run: cmake --build build-static --config Release --parallel 4
       - name: Exercise BCrypt primitives and verify JOSE signatures independently
+        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
         run: python tests/crypto/run_vectors.py --binary build-static/Release/backend-crypto-test.exe
       - name: Exercise public certificate setter lifetime and encodings
+        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
         run: python tests/tls_backend/run_cert_buffers.py --binary build-static/Release/backend-cert-test.exe
       - name: Exercise real Schannel TLS and mutual authentication
+        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
         run: python tests/schannel_transport.py --client build-static/Release/backend-schannel-test.exe
       - name: Configure shared artifact dependency audit
+        id: configure_shared
+        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
         run: >-
           cmake -S . -B build-shared -A x64
           -DRDKAFKA_TLS_BACKEND=schannel -DRDKAFKA_CRYPTO_BACKEND=bcrypt
@@ -44,8 +50,11 @@ jobs:
           -DWITH_ZSTD=OFF -DWITH_HDRHISTOGRAM=OFF -DENABLE_LZ4_EXT=OFF
           -DWITH_SASL=ON -DCMAKE_SHARED_LINKER_FLAGS=/MAP
       - name: Build shared Schannel and BCrypt artifact
+        id: shared_build
+        if: ${{ !cancelled() && steps.configure_shared.outcome == 'success' }}
         run: cmake --build build-shared --config Release --target rdkafka --parallel 4
       - name: Verify Windows crypto imports and absence of OpenSSL
+        if: ${{ !cancelled() && steps.shared_build.outcome == 'success' }}
         shell: pwsh
         run: |
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"

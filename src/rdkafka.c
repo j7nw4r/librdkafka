@@ -2546,6 +2546,7 @@ static int rd_kafka_thread_main(void *arg) {
         rd_kafka_wrlock(rk);
         rd_kafka_wrunlock(rk);
 
+        rd_kafka_crypto_thread_term();
         rd_kafka_interceptors_on_thread_exit(rk, RD_KAFKA_THREAD_MAIN);
 
         rd_kafka_destroy_internal(rk);
