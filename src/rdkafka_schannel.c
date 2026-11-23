@@ -713,7 +713,8 @@ static int rd_kafka_schannel_handshake_step(rd_kafka_transport_t *t,
             &cfg->cred, s->have_context ? &s->context : NULL, NULL,
             ISC_REQ_SEQUENCE_DETECT | ISC_REQ_REPLAY_DETECT |
                 ISC_REQ_CONFIDENTIALITY | ISC_REQ_EXTENDED_ERROR |
-                ISC_REQ_ALLOCATE_MEMORY | ISC_REQ_STREAM,
+                ISC_REQ_ALLOCATE_MEMORY | ISC_REQ_STREAM |
+                ISC_REQ_USE_SUPPLIED_CREDS,
             0, SECURITY_NATIVE_DREP, s->have_context ? &in_desc : NULL, 0,
             &s->context, &out_desc, &s->attributes, &expiry);
         /* Target name is supplied by the wide entry point below for the first
@@ -887,7 +888,8 @@ static int rd_kafka_schannel_connect(rd_kafka_broker_t *rkb,
             &cfg->cred, NULL, s->hostname,
             ISC_REQ_SEQUENCE_DETECT | ISC_REQ_REPLAY_DETECT |
                 ISC_REQ_CONFIDENTIALITY | ISC_REQ_EXTENDED_ERROR |
-                ISC_REQ_ALLOCATE_MEMORY | ISC_REQ_STREAM,
+                ISC_REQ_ALLOCATE_MEMORY | ISC_REQ_STREAM |
+                ISC_REQ_USE_SUPPLIED_CREDS,
             0, SECURITY_NATIVE_DREP, NULL, 0, &s->context, &output,
             &s->attributes, &expiry);
         if (SecIsValidHandle(&s->context))
