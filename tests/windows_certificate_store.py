@@ -149,15 +149,9 @@ def temporary_windows_identities(root, names=("client", "invalid-client", "expir
             try:
                 if journal.exists():
                     _powershell(_CLEANUP, {"RDKAFKA_FIXTURE_KEY_JOURNAL": str(journal)})
-                else:
-                    # A failed constructor/import is already a test failure;
-                    # still remove a known fixture certificate if it was added.
-                    _powershell(r"""
-$ErrorActionPreference = 'Stop'
-$path = 'Cert:\CurrentUser\My\' + $env:RDKAFKA_FIXTURE_THUMBPRINT
-if (Test-Path $path) { Remove-Item -Path $path -DeleteKey -Confirm:$false }
-if (Test-Path $path) { throw 'Failed setup certificate cleanup was incomplete' }
-""", {"RDKAFKA_FIXTURE_THUMBPRINT": thumbprint})
+                # Before the journal exists, PowerShell owns failed-import
+                # cleanup. In particular, a preexisting certificate rejection
+                # must never authorize Python to remove that other identity.
             except Exception as exc:
                 errors.append(str(exc))
         if errors:
