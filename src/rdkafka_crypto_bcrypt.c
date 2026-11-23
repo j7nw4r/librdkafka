@@ -291,5 +291,5 @@ done:
 static void global_noop(void) {
 }
 const rd_kafka_crypto_ops_t rd_kafka_crypto_bcrypt_ops = {
-    "bcrypt", global_noop,  global_noop, digest,    hmac,
-    pbkdf2,   random_bytes, key_load,    sign_data, key_destroy};
+    "bcrypt", global_noop,  global_noop, global_noop, digest,     hmac,
+    pbkdf2,   random_bytes, key_load,    sign_data,   key_destroy};

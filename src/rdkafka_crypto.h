@@ -47,6 +47,7 @@ typedef struct rd_kafka_crypto_ops_s {
         const char *name;
         void (*global_init)(void);
         void (*global_term)(void);
+        void (*thread_term)(void);
         int (*digest)(rd_kafka_crypto_hash_t,
                       const void *,
                       size_t,
@@ -83,6 +84,7 @@ extern const rd_kafka_crypto_ops_t rd_kafka_crypto_bcrypt_ops;
 extern const rd_kafka_crypto_ops_t *const rd_kafka_crypto_ops;
 void rd_kafka_crypto_init(void);
 void rd_kafka_crypto_term(void);
+void rd_kafka_crypto_thread_term(void);
 size_t rd_kafka_crypto_digest_size(rd_kafka_crypto_hash_t);
 int rd_kafka_crypto_digest(rd_kafka_crypto_hash_t,
                            const void *,

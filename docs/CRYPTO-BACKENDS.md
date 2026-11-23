@@ -20,7 +20,13 @@ no crypto provider retains its platform entropy source for existing ordinary
 uses. Non-security scheduling jitter/partition randomness remain separate.
 The OpenSSL adapter retains pre-1.1 initialization/locking for crypto-only builds;
 when OpenSSL TLS is selected its existing shared runtime supplies those hooks.
-This legacy path is implemented but was not run with a legacy OpenSSL artifact.
+Legacy error queues are released through the crypto thread-cleanup hook on
+owned broker/main/background threads, independently of TLS. The adapter was
+syntax-checked against official hash-verified OpenSSL 1.0.1u and 1.0.2u headers,
+including crypto-only initialization and configurations disabling EC/ECDSA/RSA
+and hashes. Legacy libraries were not linked/executed. Modern EC-disabled
+adapter execution explicitly rejected ES256 while retaining primitive services.
+These are compatibility checks, not a recommendation to deploy old OpenSSL.
 
 Base64 encoding/decoding is an independent utility in every build. Decoding
 validates standard alphabet, complete quartets, terminal/canonical padding and

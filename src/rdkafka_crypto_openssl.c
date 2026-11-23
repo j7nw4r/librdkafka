@@ -34,8 +34,12 @@
 #include <openssl/hmac.h>
 #include <openssl/rand.h>
 #include <openssl/pem.h>
+#ifndef OPENSSL_NO_RSA
 #include <openssl/rsa.h>
+#endif
+#if !defined(OPENSSL_NO_EC) && !defined(OPENSSL_NO_ECDSA)
 #include <openssl/ecdsa.h>
+#endif
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -88,17 +92,36 @@ static void global_term(void) {
         }
 #endif
 }
+static void thread_term(void) {
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L && !defined(LIBRESSL_VERSION_NUMBER)
+        /* Modern OpenSSL releases thread state automatically. */
+#elif OPENSSL_VERSION_NUMBER >= 0x10000000L
+        ERR_remove_thread_state(NULL);
+#endif
+}
 struct rd_kafka_crypto_key_s {
         EVP_PKEY *key;
 };
 static const EVP_MD *md(rd_kafka_crypto_hash_t h) {
         switch (h) {
         case RD_KAFKA_CRYPTO_SHA1:
+#if !defined(OPENSSL_NO_SHA) && !defined(OPENSSL_NO_SHA1)
                 return EVP_sha1();
+#else
+                return NULL;
+#endif
         case RD_KAFKA_CRYPTO_SHA256:
+#ifndef OPENSSL_NO_SHA256
                 return EVP_sha256();
+#else
+                return NULL;
+#endif
         case RD_KAFKA_CRYPTO_SHA512:
+#ifndef OPENSSL_NO_SHA512
                 return EVP_sha512();
+#else
+                return NULL;
+#endif
         default:
                 return NULL;
         }
@@ -171,7 +194,7 @@ key_load(const void *pem, size_t n, const char *password, char *e, size_t en) {
                 snprintf(e, en, "OpenSSL private key is too large");
                 return NULL;
         }
-        bio = BIO_new_mem_buf(pem, (int)n);
+        bio = BIO_new_mem_buf((void *)pem, (int)n);
         k   = calloc(1, sizeof(*k));
         if (bio && k)
                 k->key = PEM_read_bio_PrivateKey(bio, NULL, password_cb,
@@ -202,9 +225,16 @@ static int sign_data(rd_kafka_crypto_key_t *k,
         size_t size         = 0;
         int ok              = 0;
         if (alg == RD_KAFKA_CRYPTO_RS256) {
+#ifndef OPENSSL_NO_RSA
                 if (EVP_PKEY_base_id(k->key) != EVP_PKEY_RSA)
                         goto done;
+#else
+                snprintf(e, en,
+                         "OpenSSL RS256 signing is unavailable: RSA disabled");
+                return -1;
+#endif
         } else if (alg == RD_KAFKA_CRYPTO_ES256) {
+#if !defined(OPENSSL_NO_EC) && !defined(OPENSSL_NO_ECDSA)
                 EC_KEY *ec;
                 const EC_GROUP *group;
                 int curve;
@@ -218,15 +248,24 @@ static int sign_data(rd_kafka_crypto_key_t *k,
                 EC_KEY_free(ec);
                 if (curve != NID_X9_62_prime256v1)
                         goto done;
+#else
+                snprintf(
+                    e, en,
+                    "OpenSSL ES256 signing is unavailable: EC/ECDSA disabled");
+                return -1;
+#endif
         } else
                 goto done;
         ctx = EVP_MD_CTX_new();
-        if (!ctx ||
-            EVP_DigestSignInit(ctx, &pkctx, EVP_sha256(), NULL, k->key) != 1)
+        if (!md(RD_KAFKA_CRYPTO_SHA256) || !ctx ||
+            EVP_DigestSignInit(ctx, &pkctx, md(RD_KAFKA_CRYPTO_SHA256), NULL,
+                               k->key) != 1)
                 goto done;
+#ifndef OPENSSL_NO_RSA
         if (alg == RD_KAFKA_CRYPTO_RS256 &&
             EVP_PKEY_CTX_set_rsa_padding(pkctx, RSA_PKCS1_PADDING) <= 0)
                 goto done;
+#endif
         if (EVP_DigestSignUpdate(ctx, p, n) != 1 ||
             EVP_DigestSignFinal(ctx, NULL, &size) != 1)
                 goto done;
@@ -234,6 +273,7 @@ static int sign_data(rd_kafka_crypto_key_t *k,
         if (!sig || EVP_DigestSignFinal(ctx, sig, &size) != 1)
                 goto done;
         if (alg == RD_KAFKA_CRYPTO_ES256) {
+#if !defined(OPENSSL_NO_EC) && !defined(OPENSSL_NO_ECDSA)
                 const unsigned char *q = sig;
                 const BIGNUM *r, *s;
                 ECDSA_SIG *v = d2i_ECDSA_SIG(NULL, &q, (long)size);
@@ -265,6 +305,9 @@ static int sign_data(rd_kafka_crypto_key_t *k,
                         goto done;
                 memcpy(sig, raw, 64);
                 size = 64;
+#else
+                goto done;
+#endif
         }
         *out = sig;
         *on  = size;
@@ -279,5 +322,5 @@ done:
         return ok ? 0 : -1;
 }
 const rd_kafka_crypto_ops_t rd_kafka_crypto_openssl_ops = {
-    "openssl", global_init,  global_term, digest,    hmac,
-    pbkdf2,    random_bytes, key_load,    sign_data, key_destroy};
+    "openssl", global_init,  global_term, thread_term, digest,     hmac,
+    pbkdf2,    random_bytes, key_load,    sign_data,   key_destroy};

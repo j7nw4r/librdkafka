@@ -44,6 +44,10 @@ void rd_kafka_crypto_term(void) {
         if (rd_kafka_crypto_ops)
                 rd_kafka_crypto_ops->global_term();
 }
+void rd_kafka_crypto_thread_term(void) {
+        if (rd_kafka_crypto_ops)
+                rd_kafka_crypto_ops->thread_term();
+}
 size_t rd_kafka_crypto_digest_size(rd_kafka_crypto_hash_t h) {
         switch (h) {
         case RD_KAFKA_CRYPTO_SHA1:
