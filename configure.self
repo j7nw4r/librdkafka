@@ -47,8 +47,8 @@ mkl_toggle_option "Feature" ENABLE_C11THREADS "--enable-c11threads" "Enable dete
 mkl_toggle_option "Feature" ENABLE_SYSLOG "--enable-syslog" "Enable logging to syslog" "y"
 
 
-mkl_option "Feature" RDKAFKA_TLS_BACKEND "--with-tls-backend" "Broker TLS backend (openssl, schannel, none; empty preserves --enable-ssl)" ""
-mkl_option "Feature" RDKAFKA_CRYPTO_BACKEND "--with-crypto-backend" "Authentication crypto backend (openssl, bcrypt, none; empty follows TLS)" ""
+mkl_option "Feature" RDKAFKA_TLS_BACKEND "--with-tls-backend=BACKEND" "Broker TLS backend (openssl, schannel, none; empty preserves --enable-ssl)" ""
+mkl_option "Feature" RDKAFKA_CRYPTO_BACKEND "--with-crypto-backend=BACKEND" "Authentication crypto backend (openssl, bcrypt, none; empty follows TLS)" ""
 
 function checks {
 

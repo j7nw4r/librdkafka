@@ -120,9 +120,10 @@ int main(int argc, char **argv) {
         rd_kafka_transport_t transport;
         rd_kafka_conf_t *conf = NULL;
         struct sockaddr_in addr;
-        SOCKET fd       = INVALID_SOCKET;
-        u_long nonblock = 1;
-        int small = 1024, result = 0, have_lock = 0, have_context = 0;
+        SOCKET fd              = INVALID_SOCKET;
+        u_long nonblock        = 1;
+        int socket_buffer_size = 1024, result = 0, have_lock = 0,
+            have_context = 0;
         int reject, cancel, before;
         char error[1024] = "";
         rd_buf_t sendbuf;
@@ -181,8 +182,9 @@ int main(int argc, char **argv) {
         addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         addr.sin_port        = htons((u_short)atoi(argv[5]));
         CHECK(connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0);
-        CHECK(setsockopt(fd, SOL_SOCKET, SO_SNDBUF, (const char *)&small,
-                         sizeof(small)) == 0);
+        CHECK(setsockopt(fd, SOL_SOCKET, SO_SNDBUF,
+                         (const char *)&socket_buffer_size,
+                         sizeof(socket_buffer_size)) == 0);
         CHECK(ioctlsocket(fd, FIONBIO, &nonblock) == 0);
         transport.rktrans_s        = fd;
         transport.rktrans_wsaevent = WSACreateEvent();

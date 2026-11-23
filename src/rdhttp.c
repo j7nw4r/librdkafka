@@ -221,6 +221,18 @@ rd_http_ssl_ctx_function(CURL *curl, void *sslctx, void *userptr) {
 
 #endif /* WITH_SSL: native OpenSSL callback only */
 
+/* CURLOPT_CAPATH is implemented by these curl TLS backends. Schannel and
+ * Rustls support explicit CA files/blobs but not certificate directories. */
+static rd_bool_t rd_http_curl_supports_capath(const char *backend) {
+        return backend &&
+            (!strncmp(backend, "OpenSSL/", 8) ||
+             !strncmp(backend, "LibreSSL/", 9) ||
+             !strncmp(backend, "BoringSSL", 9) ||
+             !strncmp(backend, "GnuTLS/", 7) ||
+             !strncmp(backend, "mbedTLS/", 8) ||
+             !strncmp(backend, "wolfSSL/", 8));
+}
+
 /* HTTP TLS is owned by libcurl, independently of the broker TLS backend.
  * Never cast a Schannel/GnuTLS native context to SSL_CTX. Explicit trust
  * configuration must either be applied successfully or fail initialization. */
@@ -229,6 +241,7 @@ static CURLcode rd_http_ssl_configure(rd_kafka_t *rk, CURL *curl) {
         const curl_version_info_data *version = curl_version_info(CURLVERSION_NOW);
         rd_bool_t curl_openssl = version && version->ssl_version &&
             !strncmp(version->ssl_version, "OpenSSL/", 8);
+        rd_bool_t curl_capath = rd_http_curl_supports_capath(version ? version->ssl_version : NULL);
         CURLcode result;
 #define SET_TRUST(option, value) do { \
         result = curl_easy_setopt(curl, (option), (value)); \
@@ -238,8 +251,11 @@ static CURLcode rd_http_ssl_configure(rd_kafka_t *rk, CURL *curl) {
                 rd_bool_t directory;
                 if (!rd_file_stat(rk->rk_conf.https.ca_location, &directory))
                         return CURLE_SSL_CACERT_BADFILE;
+                if (directory && !curl_capath)
+                        return CURLE_NOT_BUILT_IN;
                 SET_TRUST(CURLOPT_CAINFO, NULL);
-                SET_TRUST(CURLOPT_CAPATH, NULL);
+                if (curl_capath)
+                        SET_TRUST(CURLOPT_CAPATH, NULL);
                 if (directory)
                         SET_TRUST(CURLOPT_CAPATH, rk->rk_conf.https.ca_location);
                 else
@@ -253,7 +269,8 @@ static CURLcode rd_http_ssl_configure(rd_kafka_t *rk, CURL *curl) {
                     .len = strlen(rk->rk_conf.https.ca_pem),
                     .flags = CURL_BLOB_COPY};
                 SET_TRUST(CURLOPT_CAINFO, NULL);
-                SET_TRUST(CURLOPT_CAPATH, NULL);
+                if (curl_capath)
+                        SET_TRUST(CURLOPT_CAPATH, NULL);
                 SET_TRUST(CURLOPT_CAINFO_BLOB, &blob);
                 return CURLE_OK;
 #else
@@ -838,6 +855,12 @@ int unittest_http_get_params_append(void) {
 
 int unittest_http(void) {
         int fails = 0;
+        RD_UT_ASSERT(!rd_http_curl_supports_capath("Schannel"),
+                     "Schannel HTTPS must not receive unsupported CAPATH");
+        RD_UT_ASSERT(!rd_http_curl_supports_capath("Rustls/0.23"),
+                     "Rustls HTTPS does not implement CAPATH");
+        RD_UT_ASSERT(rd_http_curl_supports_capath("OpenSSL/3.5.9"),
+                     "OpenSSL HTTPS supports explicit CA directories");
 
         fails += unittest_http_get();
         fails += unittest_http_get_params_append();
