@@ -116,7 +116,9 @@ jobs:
           }
           $functions = & $dumpbin.FullName /IMPORTS $dll.FullName | Out-String
           if ($LASTEXITCODE -ne 0) { throw 'Function import audit failed' }
-          foreach ($function in @('BCryptGenRandom','BCryptDeriveKeyPBKDF2','BCryptCreateHash','NCryptSignHash','InitializeSecurityContextA')) {
+          # Schannel uses the A SSPI functions; SASL GSSAPI (SSPI Kerberos)
+          # must use the W functions, because CMake does not define UNICODE.
+          foreach ($function in @('BCryptGenRandom','BCryptDeriveKeyPBKDF2','BCryptCreateHash','NCryptSignHash','InitializeSecurityContextA','InitializeSecurityContextW','AcquireCredentialsHandleW')) {
             if ($functions -notmatch [regex]::Escape($function)) { throw "Required backend function missing: $function" }
           }
           $maps = Get-ChildItem build-shared -Recurse -Filter '*.map'
