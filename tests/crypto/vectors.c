@@ -99,6 +99,8 @@ static int codecs(void) {
                              out;
                 rd_base64_encode(&in, &out);
                 CHECK(out.ptr == NULL && out.size == 0);
+                CHECK(rd_base64_encode_str(&in) == NULL);
+                CHECK(rd_base64_encode_str_urlsafe(&in) == NULL);
         }
         return 0;
 }
