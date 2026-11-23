@@ -62,6 +62,43 @@ static int load(rd_kafka_conf_t *conf,
         return 0;
 }
 
+/* Exercise the retained OpenSSL objects through two real SSL_CTX owners.
+ * Clearing/replacing a config must not invalidate either live client. */
+static int live_openssl_clients(rd_kafka_conf_t *conf) {
+        char features[512], error[512];
+        size_t size            = sizeof(features);
+        rd_kafka_t *clients[2] = {NULL, NULL};
+        int i, failed = 0;
+        if (rd_kafka_conf_get(conf, "builtin.features", features, &size) !=
+            RD_KAFKA_CONF_OK)
+                return 1;
+        if (!strstr(features, "tls_openssl"))
+                return 0;
+        for (i = 0; i < 2; i++) {
+                rd_kafka_conf_t *copy = rd_kafka_conf_dup(conf);
+                if (rd_kafka_conf_set(copy, "security.protocol", "ssl", error,
+                                      sizeof(error)) != RD_KAFKA_CONF_OK) {
+                        rd_kafka_conf_destroy(copy);
+                        failed = 1;
+                        break;
+                }
+                clients[i] =
+                    rd_kafka_new(RD_KAFKA_PRODUCER, copy, error, sizeof(error));
+                if (!clients[i]) {
+                        fprintf(stderr,
+                                "Retained certificate client failed: %s\n",
+                                error);
+                        rd_kafka_conf_destroy(copy);
+                        failed = 1;
+                        break;
+                }
+        }
+        for (i = 0; i < 2; i++)
+                if (clients[i])
+                        rd_kafka_destroy(clients[i]);
+        return failed;
+}
+
 int main(int argc, char **argv) {
         rd_kafka_conf_t *conf, *copy;
         char err[512];
@@ -96,6 +133,8 @@ int main(int argc, char **argv) {
                         return 1;
         }
         rd_kafka_conf_destroy(conf);
+        if (live_openssl_clients(copy))
+                return 1;
         /* Replace duplicate entries with DER and release shared originals. */
         for (i = 0; i < 3; i++) {
                 if (load(copy, types[i], RD_KAFKA_CERT_ENC_DER, argv[i + 4]))
