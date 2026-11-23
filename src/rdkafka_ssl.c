@@ -1599,7 +1599,9 @@ static int rd_kafka_ssl_set_certs(rd_kafka_t *rk,
                 if (sk_X509_num(ca) == 0) {
                         sk_X509_pop_free(ca, X509_free);
                 } else {
-                        r = SSL_CTX_set1_chain(ctx, ca);
+                        /* This chain was parsed for this context, rather
+                         * than shared by immutable configuration objects. */
+                        r = SSL_CTX_set0_chain(ctx, ca);
                         if (r != 1) {
                                 rd_snprintf(errstr, errstr_size,
                                             "ssl.certificate.pem failed: "

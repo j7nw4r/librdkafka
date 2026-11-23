@@ -33,11 +33,16 @@ def kafka_distribution(cache):
         partial = cache / (ARCHIVE + '.partial')
         deadline = time.monotonic() + 600
         try:
+            print('Downloading official Kafka', VERSION, 'distribution:', URL, flush=True)
             with urllib.request.urlopen(URL, timeout=30) as response, partial.open('wb') as output:
+                received = 0
                 while block := response.read(1024 * 1024):
                     if time.monotonic() > deadline:
                         raise TimeoutError('Kafka archive download deadline exceeded')
                     output.write(block)
+                    received += len(block)
+                    if received // (16 * 1024 * 1024) != (received - len(block)) // (16 * 1024 * 1024):
+                        print('Kafka download:', received // (1024 * 1024), 'MiB', flush=True)
             partial.replace(archive)
         finally:
             partial.unlink(missing_ok=True)

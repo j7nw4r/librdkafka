@@ -29,6 +29,10 @@ with tempfile.TemporaryDirectory(prefix='rdkafka-cert-buffers-') as temp:
     key = serialization.load_pem_private_key((root / 'client.key').read_bytes(), None)
     (root / 'key.der').write_bytes(key.private_bytes(serialization.Encoding.DER,
         serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+    # PEM carries an actual chain, exercising shared chain ownership as well
+    # as the leaf/key. DER deliberately remains a single certificate.
+    (root / 'client.crt').write_bytes((root / 'client.crt').read_bytes() +
+                                    (root / 'ca.crt').read_bytes())
     paths = [root / name for name in ('ca.crt', 'client.crt', 'client.key', 'ca.der', 'client.der', 'key.der')]
     subprocess.run(runner + [str(args.binary.resolve())] + [argument(path) for path in paths],
                    check=True, timeout=45)

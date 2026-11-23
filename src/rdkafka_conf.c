@@ -929,8 +929,8 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
     {_RK_GLOBAL, "ssl.schannel.certificate", _RK_C_STR,
      _RK(ssl.schannel_certificate),
      "Read-only Schannel client identity in the Windows MY certificate store. "
-     "Use CurrentUser/My/<SHA1-thumbprint> or "
-     "LocalMachine/My/<SHA1-thumbprint>. "
+     "Use CurrentUser/My/THUMBPRINT or LocalMachine/My/THUMBPRINT, where "
+     "THUMBPRINT is the 40 hexadecimal digit SHA-1 certificate identifier. "
      "The certificate must already have an accessible private key. "
      "Mutually exclusive with certificate, key and keystore inputs. "
      "The adapter does not import or persist this identity.",

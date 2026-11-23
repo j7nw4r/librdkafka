@@ -2578,7 +2578,7 @@ rd_kafka_t *rd_kafka_new(rd_kafka_type_t type,
 #ifndef _WIN32
         sigset_t newset, oldset;
 #endif
-        char builtin_features[128];
+        char builtin_features[256];
         size_t bflen;
 
         rd_kafka_global_init();
