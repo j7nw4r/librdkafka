@@ -59,14 +59,14 @@ jobs:
       - name: Build native static backend tests
         id: native_build
         run: cmake --build build-static --config Release --parallel 4
-      - name: Run the local Admin unit test with BCrypt SCRAM credentials
+      - name: Run local unit, configuration and Admin tests
         if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
         working-directory: tests
         shell: pwsh
         run: |
-          $env:TESTS = '0080'
+          $env:TESTS = '0000,0004,0080'
           ..\build-static\tests\Release\test-runner.exe -l
-          if ($LASTEXITCODE -ne 0) { throw 'Test 0080 failed' }
+          if ($LASTEXITCODE -ne 0) { throw 'Local tests failed' }
       - name: Exercise BCrypt primitives and verify JOSE signatures independently
         if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
         run: python tests/crypto/run_vectors.py --binary build-static/Release/backend-crypto-test.exe
@@ -126,3 +126,31 @@ jobs:
               throw 'Unexpected static OpenSSL input in link map'
             }
           }
+  schannel-bcrypt-curl:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install libcurl with the Schannel backend
+        run: vcpkg install curl:x64-windows
+      - name: Configure Schannel, BCrypt and libcurl
+        shell: pwsh
+        run: >-
+          cmake -S . -B build-curl -A x64
+          "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          -DVCPKG_MANIFEST_MODE=OFF
+          -DRDKAFKA_TLS_BACKEND=schannel -DRDKAFKA_CRYPTO_BACKEND=bcrypt
+          -DRDKAFKA_BUILD_STATIC=ON -DRDKAFKA_BUILD_TESTS=ON
+          -DRDKAFKA_BUILD_EXAMPLES=OFF -DWITH_CURL=ON -DWITH_ZLIB=OFF
+          -DWITH_ZSTD=OFF -DWITH_HDRHISTOGRAM=OFF -DENABLE_LZ4_EXT=OFF
+          -DWITH_SASL=ON
+      - name: Build the test runner
+        run: cmake --build build-curl --config Release --target test-runner --parallel 4
+      - name: Run OIDC unit tests and HTTPS configuration tests
+        working-directory: tests
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin;$env:PATH"
+          $env:TESTS = '0000,0004'
+          ..\build-curl\tests\Release\test-runner.exe -l
+          if ($LASTEXITCODE -ne 0) { throw 'Local tests with libcurl failed' }
