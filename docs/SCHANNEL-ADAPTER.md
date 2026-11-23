@@ -25,8 +25,12 @@ traffic. Disabled verification/hostname matching and OpenSSL verification
 callbacks are rejected, not mapped to an approximate callback contract.
 
 Mutual TLS selects an existing identity with
-`ssl.schannel.certificate=CurrentUser/My/<40-hex thumbprint>` or
-`LocalMachine/My/<40-hex thumbprint>`. The SHA-1 thumbprint is only a store
+`ssl.certificate.store=CurrentUser/My/<40-hex thumbprint>` or
+`LocalMachine/My/<40-hex thumbprint>`. The parser accepts `\` or `/`, any
+case, spaces, the invisible U+200E mark that the certificate manager (MMC)
+copies with a thumbprint, and a `Cert:\` prefix as PowerShell shows it. So
+`Cert:\LocalMachine\My\AB12...` and `currentuser/my/ab 12 ...` both work.
+Only the My (personal) store is supported. The SHA-1 thumbprint is only a store
 identifier; it does not choose the certificate signature/verification algorithm.
 The adapter opens My read-only, requires an existing named private-key
 association, and acquires the key with silent/no-healing/public-key-comparison
@@ -52,12 +56,47 @@ full ephemeral private-key mTLS remains subject to the operating-system limit.
 Temporary key/password bytes are wiped. Private data and certificate contents
 never appear in diagnostics.
 
-Explicit OpenSSL provider/engine, cipher-expression, curve/signature-expression,
-key-password, CRL and custom Windows-store-list settings are rejected. Native
-system trust is selected by leaving CA fields unset. `ssl.ca.location=probe` is
-not interpreted as Windows trust. Multiple sources for one credential/trust
-component, and a store selector combined with imported certificate/key/PFX
-settings, fail early.
+OpenSSL-only properties fail at `rd_kafka_conf_set()` with "OpenSSL-only; this
+build uses Schannel TLS": `ssl.cipher.suites`, `ssl.curves.list`,
+`ssl.sigalgs.list`, `ssl.key.password`, `ssl.crl.location`, `ssl.providers`,
+`ssl.engine.location`, `ssl.engine.id` and the OpenSSL verification and engine
+callbacks. `ssl.endpoint.identification.algorithm=none` also fails at
+`rd_kafka_conf_set()`. Checks that depend on values or combinations fail at
+`rd_kafka_new()` and name the property: `enable.ssl.certificate.verification=false`,
+`ssl.ca.location=probe`, a CA directory, `ssl.ca.certificate.stores` other than
+`Root`, multiple sources for one credential or trust component, and a store
+selector combined with imported certificate/key/PFX settings. Native system
+trust is selected by leaving CA fields unset; `ssl.ca.certificate.stores=Root`
+(the default) also means system trust. Windows status codes in errors carry the
+Windows message text next to the hexadecimal code.
+
+## Provisioning a store identity
+
+Import the certificate and its private key into the personal store of the
+account that runs the client. In PowerShell 7 or Windows PowerShell:
+
+```powershell
+$password = Read-Host -AsSecureString 'PFX password'
+$cert = Import-PfxCertificate -FilePath client.pfx `
+  -CertStoreLocation Cert:\CurrentUser\My -Password $password
+$cert.Thumbprint
+```
+
+Use `Cert:\LocalMachine\My` for a service; that import needs an elevated
+prompt. Read the thumbprint of an existing certificate with
+`Get-ChildItem Cert:\CurrentUser\My` (or `Cert:\LocalMachine\My`), or copy
+it from the Details tab of the certificate in `certlm.msc` or `certmgr.msc`.
+Then set, for example,
+`ssl.certificate.store=LocalMachine/My/<thumbprint>`.
+
+A service account that is not an administrator, such as
+`NT SERVICE\MyKafkaService` or `NETWORK SERVICE`, also needs read access to the
+private key of a LocalMachine certificate. In `certlm.msc`, open
+Personal > Certificates, right-click the certificate, select All Tasks >
+Manage Private Keys, and give the account Read. Without that access the error
+names `ssl.certificate.store` and gives the Windows message, for example
+"Keyset does not exist" or "Access is denied". Import with `-Exportable` only if you need to export
+the key again; the client never exports or copies it.
 
 ## Nonblocking contract
 

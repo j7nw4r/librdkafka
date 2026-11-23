@@ -21,7 +21,9 @@ and BCrypt uses BCrypt/NCrypt; this client library has no OpenSSL dependency.
 Use `none` for either service to omit it. An empty TLS choice preserves the
 legacy `WITH_SSL` option; an empty crypto choice follows the selected TLS
 backend. `WITH_SSL` continues to mean the OpenSSL TLS implementation internally,
-while `WITH_TLS` and `WITH_CRYPTO` are independent capability gates.
+while `WITH_TLS` and `WITH_CRYPTO` are independent capability gates. CMake
+stops with an error when `-DWITH_SSL=ON` is combined with
+`RDKAFKA_TLS_BACKEND=schannel` or `none`, instead of silently ignoring it.
 
 The configure equivalents are `--with-tls-backend=openssl|schannel|none` and
 `--with-crypto-backend=openssl|bcrypt|none`. The existing Windows Visual Studio
@@ -33,13 +35,16 @@ Use a separate checkout for configure builds: its generated source-root
 Installed CMake targets propagate native libraries and crypto-only OpenSSL
 dependencies. Windows pkg-config metadata includes BCrypt/NCrypt where needed.
 
-Query `builtin.features` with `rd_kafka_conf_get()`: `ssl` describes broker TLS,
-`crypto` authentication crypto, and `tls_openssl`, `tls_schannel`,
-`crypto_openssl`, `crypto_bcrypt` identify their implementations. Applications
+Query `builtin.features` with `rd_kafka_conf_get()`. `ssl` keeps its name for
+compatibility and now means broker TLS from any backend; `tls_openssl` or
+`tls_schannel` names the backend. `auth_crypto` means authentication crypto
+(SASL SCRAM, OAUTHBEARER/OIDC JWT signing and SCRAM credential upserts);
+`auth_crypto_openssl` or `auth_crypto_bcrypt` names its backend. Applications
 can set the same property to require a capability at configuration time.
 
-OpenSSL provider/engine options retain OpenSSL-only semantics. Unsupported
-Schannel settings fail explicitly. See [Schannel scope](SCHANNEL-ADAPTER.md)
+OpenSSL provider/engine options retain OpenSSL-only semantics. In a Schannel
+build every OpenSSL-only property fails at `rd_kafka_conf_set()` with
+"OpenSSL-only; this build uses Schannel TLS". See [Schannel scope](SCHANNEL-ADAPTER.md)
 for certificate formats, trust, protocol and identity restrictions, and
 [crypto services](CRYPTO-BACKENDS.md) for signing formats and lifecycle.
 
@@ -47,8 +52,21 @@ HTTPS/OIDC through libcurl is a separate TLS connection and backend. The
 OpenSSL SSL-context callback is installed only with an actual OpenSSL curl
 backend. Other curl backends use supported CA file/blob options; unsupported
 CA directory/probe modes fail. Selecting Schannel for broker TLS does not
-select or qualify curl's implementation. Native Schannel curl HTTPS acceptance
-has not been executed by the Windows workflow (which builds with curl off).
+select or qualify curl's implementation. A Windows CMake build with
+`-DWITH_CURL=ON` and an authentication crypto backend enables OIDC
+(`builtin.features` reports `http` and `oidc`); the Windows workflow builds one
+with vcpkg libcurl and runs the OIDC unit tests. It does not run an end-to-end
+OIDC token exchange.
+
+`https.revocation.check` controls certificate revocation checks for these
+HTTPS requests. `default` keeps the libcurl backend behavior: curl with
+Schannel checks revocation and fails with "revocation status unknown" for a
+private CA without a reachable CRL, and OpenSSL-based curl does not check.
+`best_effort` maps to `CURLSSLOPT_REVOKE_BEST_EFFORT` (libcurl 7.70.0 or later)
+and `none` to `CURLSSLOPT_NO_REVOKE`. libcurl documents both flags as Schannel
+only ([CURLOPT_SSL_OPTIONS](https://curl.se/libcurl/c/CURLOPT_SSL_OPTIONS.html)),
+so with another curl backend `rd_kafka_new()` fails and names the property
+instead of ignoring the setting.
 
 ## Evidence and limits
 
