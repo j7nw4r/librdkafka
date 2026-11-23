@@ -28,9 +28,6 @@
 
 #include "rdbase64.h"
 
-#if WITH_SSL
-#include <openssl/ssl.h>
-#else
 
 #define conv_bin2ascii(a, table) ((table)[(a) & 0x3f])
 
@@ -71,7 +68,6 @@ static int base64_encoding_conversion(unsigned char *out,
         return ret;
 }
 
-#endif
 
 /**
  * @brief Base64 encode binary input \p in, and write base64-encoded string
@@ -84,7 +80,8 @@ void rd_base64_encode(const rd_chariov_t *in, rd_chariov_t *out) {
 
         size_t max_len;
 
-        /* OpenSSL takes an |int| argument so the input cannot exceed that. */
+        out->size = 0;
+        /* The encoder uses an int input length. */
         if (in->size > INT_MAX) {
                 out->ptr = NULL;
                 return;
@@ -93,13 +90,8 @@ void rd_base64_encode(const rd_chariov_t *in, rd_chariov_t *out) {
         max_len  = (((in->size + 2) / 3) * 4) + 1;
         out->ptr = rd_malloc(max_len);
 
-#if WITH_SSL
-        out->size = EVP_EncodeBlock((unsigned char *)out->ptr,
-                                    (unsigned char *)in->ptr, (int)in->size);
-#else
         out->size = base64_encoding_conversion(
             (unsigned char *)out->ptr, (unsigned char *)in->ptr, (int)in->size);
-#endif
 
         rd_assert(out->size < max_len);
         out->ptr[out->size] = 0;
@@ -132,6 +124,9 @@ char *rd_base64_encode_str_urlsafe(const rd_chariov_t *in) {
         char *p;
         rd_base64_encode(in, &out);
 
+        if (!out.ptr)
+                return NULL;
+
         /* Replace + with - and / with _ */
         for (p = out.ptr; *p; p++) {
                 if (*p == '+')
@@ -160,41 +155,33 @@ char *rd_base64_encode_str_urlsafe(const rd_chariov_t *in) {
  *          * -2 on conversion not supported.
  */
 int rd_base64_decode(const rd_chariov_t *in, rd_chariov_t *out) {
-
-#if WITH_SSL
-        size_t ret_len;
-
-        /* OpenSSL takes an |int| argument, so |in->size| must not exceed
-         * that. */
-        if (in->size % 4 != 0 || in->size > INT_MAX) {
-                return -1;
-        }
-
-        ret_len  = ((in->size / 4) * 3);
-        out->ptr = rd_malloc(ret_len + 1);
-
-        if (EVP_DecodeBlock((unsigned char *)out->ptr, (unsigned char *)in->ptr,
-                            (int)in->size) == -1) {
-                rd_free(out->ptr);
-                out->ptr = NULL;
-                return -1;
-        }
-
-        /* EVP_DecodeBlock will pad the output with trailing NULs and count
-         * them in the return value. */
-        if (in->size > 1 && in->ptr[in->size - 1] == '=') {
-                if (in->size > 2 && in->ptr[in->size - 2] == '=') {
-                        ret_len -= 2;
-                } else {
-                        ret_len -= 1;
+        size_t first=0,last=in->size,i,n,capacity;
+        unsigned char *dst;
+        out->ptr=NULL;out->size=0;
+        while(first<last && (in->ptr[first]==' '||in->ptr[first]=='\t'||in->ptr[first]=='\r'||in->ptr[first]=='\n'))first++;
+        while(last>first && (in->ptr[last-1]==' '||in->ptr[last-1]=='\t'||in->ptr[last-1]=='\r'||in->ptr[last-1]=='\n'))last--;
+        n=last-first;
+        if(n%4 || n>INT_MAX)return -1;
+        capacity=(n/4)*3;dst=rd_malloc(capacity+1);
+        for(i=0;i<n;i+=4){
+                unsigned int value=0;int k,pad=0;
+                for(k=0;k<4;k++){
+                        unsigned char c=(unsigned char)in->ptr[first+i+k];int v;
+                        if(c>='A'&&c<='Z')v=c-'A';
+                        else if(c>='a'&&c<='z')v=c-'a'+26;
+                        else if(c>='0'&&c<='9')v=c-'0'+52;
+                        else if(c=='+')v=62;
+                        else if(c=='/')v=63;
+                        else if(c=='=' && i+4==n && k>=2){v=0;pad++;}
+                        else goto invalid;
+                        if(pad && c!='=')goto invalid;
+                        value=(value<<6)|(unsigned)v;
                 }
+                if(pad>2 || (pad==2 && (value&0xffff)) || (pad==1 && (value&0xff)))goto invalid;
+                dst[out->size++]=(unsigned char)(value>>16);
+                if(pad<2)dst[out->size++]=(unsigned char)(value>>8);
+                if(!pad)dst[out->size++]=(unsigned char)value;
         }
-
-        out->ptr[ret_len] = 0;
-        out->size         = ret_len;
-
-        return 0;
-#else
-        return -2;
-#endif
+        dst[out->size]=0;out->ptr=(char*)dst;return 0;
+invalid:rd_free(dst);out->size=0;return -1;
 }

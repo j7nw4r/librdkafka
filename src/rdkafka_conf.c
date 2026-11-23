@@ -133,13 +133,13 @@ struct rd_kafka_property {
 #define _RK(field)  offsetof(rd_kafka_conf_t, field)
 #define _RKT(field) offsetof(rd_kafka_topic_conf_t, field)
 
-#if WITH_SSL
+#if WITH_TLS
 #define _UNSUPPORTED_SSL .unsupported = NULL
 #else
-#define _UNSUPPORTED_SSL .unsupported = "OpenSSL not available at build time"
+#define _UNSUPPORTED_SSL .unsupported = "TLS backend not available at build time"
 #endif
 
-#if OPENSSL_VERSION_NUMBER >= 0x1000200fL && defined(WITH_SSL) &&              \
+#if OPENSSL_VERSION_NUMBER >= 0x1000200fL && WITH_SSL &&              \
     !defined(LIBRESSL_VERSION_NUMBER)
 #define _UNSUPPORTED_OPENSSL_1_0_2 .unsupported = NULL
 #else
@@ -147,7 +147,13 @@ struct rd_kafka_property {
         .unsupported = "OpenSSL >= 1.0.2 not available at build time"
 #endif
 
-#if OPENSSL_VERSION_NUMBER >= 0x10100000 && defined(WITH_SSL) &&               \
+#if WITH_SCHANNEL
+#define _UNSUPPORTED_ENDPOINT_ID .unsupported = NULL
+#else
+#define _UNSUPPORTED_ENDPOINT_ID _UNSUPPORTED_OPENSSL_1_0_2
+#endif
+
+#if OPENSSL_VERSION_NUMBER >= 0x10100000 && WITH_SSL &&               \
     !defined(LIBRESSL_VERSION_NUMBER)
 #define _UNSUPPORTED_OPENSSL_1_1_0 .unsupported = NULL
 #else
@@ -162,7 +168,7 @@ struct rd_kafka_property {
         .unsupported = "OpenSSL >= 1.1.x not available at build time"
 #endif
 
-#if OPENSSL_VERSION_NUMBER >= 0x30000000 && defined(WITH_SSL)
+#if OPENSSL_VERSION_NUMBER >= 0x30000000 && WITH_SSL
 #define _UNSUPPORTED_SSL_3 .unsupported = NULL
 #else
 #define _UNSUPPORTED_SSL_3                                                     \
@@ -229,7 +235,16 @@ struct rd_kafka_property {
         .unsupported = "cyrus-sasl/libsasl2 not available at build time"
 #endif
 
-#define _UNSUPPORTED_OAUTHBEARER _UNSUPPORTED_SSL
+#if WITH_SASL_SCRAM
+#define _UNSUPPORTED_SCRAM .unsupported = NULL
+#else
+#define _UNSUPPORTED_SCRAM .unsupported = "SCRAM crypto backend not available at build time"
+#endif
+#if WITH_SASL_OAUTHBEARER
+#define _UNSUPPORTED_OAUTHBEARER .unsupported = NULL
+#else
+#define _UNSUPPORTED_OAUTHBEARER .unsupported = "OAuth bearer support not available at build time"
+#endif
 
 
 static rd_kafka_conf_res_t
@@ -386,7 +401,7 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
              {0x20, "lz4"},
              {0x40, "sasl_gssapi", _UNSUPPORTED_GSSAPI},
              {0x80, "sasl_plain"},
-             {0x100, "sasl_scram", _UNSUPPORTED_SSL},
+             {0x100, "sasl_scram", _UNSUPPORTED_SCRAM},
              {0x200, "plugins"
 #if !WITH_PLUGINS
               ,
@@ -395,7 +410,7 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
 #endif
              },
              {0x400, "zstd", _UNSUPPORTED_ZSTD},
-             {0x800, "sasl_oauthbearer", _UNSUPPORTED_SSL},
+             {0x800, "sasl_oauthbearer", _UNSUPPORTED_OAUTHBEARER},
              {0x1000, "http", _UNSUPPORTED_HTTP},
              {0x2000, "oidc", _UNSUPPORTED_OIDC},
              {0, NULL}}},
@@ -987,7 +1002,7 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
      .vdef = RD_KAFKA_SSL_ENDPOINT_ID_HTTPS,
      .s2i  = {{RD_KAFKA_SSL_ENDPOINT_ID_NONE, "none"},
               {RD_KAFKA_SSL_ENDPOINT_ID_HTTPS, "https"}},
-     _UNSUPPORTED_OPENSSL_1_0_2},
+     _UNSUPPORTED_ENDPOINT_ID},
     {_RK_GLOBAL, "ssl.certificate.verify_cb", _RK_C_PTR,
      _RK(ssl.cert_verify_cb),
      "Callback to verify the broker certificate chain.", _UNSUPPORTED_SSL},
@@ -4255,7 +4270,7 @@ const char *rd_kafka_conf_finalize(rd_kafka_type_t cltype,
         if (!conf->open_cb)
                 return "Mandatory config property `open_cb` not set";
 
-#if WITH_SSL
+#if WITH_TLS
         if (conf->ssl.keystore_location && !conf->ssl.keystore_password)
                 return "`ssl.keystore.password` is mandatory when "
                        "`ssl.keystore.location` is set";
@@ -4281,7 +4296,7 @@ const char *rd_kafka_conf_finalize(rd_kafka_type_t cltype,
 #endif
 
 
-#ifdef __APPLE__
+#if defined(__APPLE__) && WITH_SSL
         else if (!conf->ssl.ca && !conf->ssl.ca_location && !conf->ssl.ca_pem)
                 /* Default ssl.ca.location to 'probe' on OSX */
                 rd_kafka_conf_set(conf, "ssl.ca.location", "probe", NULL, 0);

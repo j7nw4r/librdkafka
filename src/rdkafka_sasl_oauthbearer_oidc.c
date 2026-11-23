@@ -40,6 +40,7 @@
 #include "rdhttp.h"
 #include "rdkafka_sasl_oauthbearer_oidc.h"
 #include "rdbase64.h"
+#include "rdkafka_crypto.h"
 
 
 /**
@@ -127,7 +128,6 @@ static const char *rd_kafka_jwt_b64_decode_payload(const char *src,
         int i, padding, len;
 
         int payload_len;
-        int nbytesdecoded;
 
         int payloads_start = 0;
         int payloads_end   = 0;
@@ -179,12 +179,12 @@ static const char *rd_kafka_jwt_b64_decode_payload(const char *src,
                         payload[payload_len++] = '=';
         }
 
-        nbytesdecoded = ((payload_len + 3) / 4) * 3;
-        *bufplainp    = rd_malloc(nbytesdecoded + 1);
-
-        if (EVP_DecodeBlock((uint8_t *)(*bufplainp), (uint8_t *)payload,
-                            (int)payload_len) == -1) {
-                errstr = "Failed to decode base64 payload";
+        {
+                rd_chariov_t encoded={.ptr=payload,.size=(size_t)payload_len};
+                rd_chariov_t decoded;
+                if(rd_base64_decode(&encoded,&decoded))
+                        errstr="Failed to decode base64 payload";
+                else *bufplainp=decoded.ptr;
         }
 
 done:
@@ -377,11 +377,12 @@ static char *rd_kafka_oidc_assertion_create(
         char *result            = NULL;
         char *header_str        = NULL;
         char *payload_str       = NULL;
-        EVP_PKEY *pkey          = NULL;
-        BIO *bio                = NULL;
+        rd_kafka_crypto_key_t *pkey = NULL;
+        char *key_file = NULL;
+        size_t key_len = 0;
+        char crypto_error[256];
         cJSON *header_json_obj  = NULL;
         cJSON *payload_json_obj = NULL;
-        EVP_MD_CTX *mdctx       = NULL;
         unsigned char *sig      = NULL;
         rd_chariov_t header_iov;
         rd_chariov_t payload_iov;
@@ -443,7 +444,14 @@ static char *rd_kafka_oidc_assertion_create(
         }
 
         if (jti_include) {
-                jti_uuid     = rd_kafka_Uuid_random();
+                jti_uuid = RD_KAFKA_UUID_ZERO;
+                if(rd_kafka_crypto_random(&jti_uuid.most_significant_bits,8)||
+                   rd_kafka_crypto_random(&jti_uuid.least_significant_bits,8)) {
+                        rd_kafka_log(rk,LOG_ERR,"JWT","Security randomness unavailable for JTI");
+                        goto cleanup;
+                }
+                jti_uuid.most_significant_bits = (int64_t)(((uint64_t)jti_uuid.most_significant_bits & ~UINT64_C(0xf000))|UINT64_C(0x4000));
+                jti_uuid.least_significant_bits = (int64_t)(((uint64_t)jti_uuid.least_significant_bits & UINT64_C(0x3fffffffffffffff))|UINT64_C(0x8000000000000000));
                 jti_uuid_str = rd_kafka_Uuid_str(&jti_uuid);
                 cJSON_DeleteItemFromObjectCaseSensitive(payload_json_obj,
                                                         "jti");
@@ -479,70 +487,28 @@ static char *rd_kafka_oidc_assertion_create(
         rd_snprintf(unsigned_token, unsigned_token_len, "%s.%s", encoded_header,
                     encoded_payload);
 
-        if (private_key_pem) {
-                bio = BIO_new_mem_buf((void *)private_key_pem, -1);
-        } else if (key_file_location) {
-                bio = BIO_new_file(key_file_location, "r");
+        if(private_key_pem)key_len=strlen(private_key_pem);
+        else if(key_file_location) {
+                key_file=rd_file_read(key_file_location,&key_len,16*1024*1024);
+                private_key_pem=key_file;
         }
-
-        if (!bio) {
-                rd_kafka_log(rk, LOG_ERR, "JWT",
-                             "Failed to create BIO for private key");
+        if(!private_key_pem) {
+                rd_kafka_log(rk,LOG_ERR,"JWT","Could not read assertion private key");
                 goto cleanup;
         }
-
-        if (passphrase) {
-                pkey = PEM_read_bio_PrivateKey(bio, NULL, NULL,
-                                               (void *)passphrase);
-        } else {
-                pkey = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
-        }
-        BIO_free(bio);
-        bio = NULL;
-
-        if (!pkey) {
-                rd_kafka_log(rk, LOG_ERR, "JWT", "Failed to load private key");
+        pkey=rd_kafka_crypto_key_load(private_key_pem,key_len,passphrase,
+                                      crypto_error,sizeof(crypto_error));
+        if(!pkey) {
+                rd_kafka_log(rk,LOG_ERR,"JWT","%s",crypto_error);
                 goto cleanup;
         }
-
-        mdctx = EVP_MD_CTX_new();
-        if (!mdctx) {
-                rd_kafka_log(rk, LOG_ERR, "JWT",
-                             "Failed to create message digest context");
-                goto cleanup;
-        }
-
-        const EVP_MD *md = EVP_sha256(); /* Both RS256 and ES256 use SHA-256 */
-
-        if (EVP_DigestSignInit(mdctx, NULL, md, NULL, pkey) != 1) {
-                rd_kafka_log(rk, LOG_ERR, "JWT",
-                             "Failed to initialize signing context");
-                goto cleanup;
-        }
-
-        if (EVP_DigestSignUpdate(mdctx, unsigned_token,
-                                 strlen(unsigned_token)) != 1) {
-                rd_kafka_log(rk, LOG_ERR, "JWT",
-                             "Failed to update digest with token data");
-                goto cleanup;
-        }
-
-        size_t siglen = 0;
-        if (EVP_DigestSignFinal(mdctx, NULL, &siglen) != 1) {
-                rd_kafka_log(rk, LOG_ERR, "JWT",
-                             "Failed to get signature length");
-                goto cleanup;
-        }
-
-        sig = rd_malloc(siglen);
-        if (!sig) {
-                rd_kafka_log(rk, LOG_ERR, "JWT",
-                             "Failed to allocate memory for signature");
-                goto cleanup;
-        }
-
-        if (EVP_DigestSignFinal(mdctx, sig, &siglen) != 1) {
-                rd_kafka_log(rk, LOG_ERR, "JWT", "Failed to create signature");
+        size_t siglen=0;
+        if(rd_kafka_crypto_sign(pkey,
+              token_signing_algo==RD_KAFKA_SASL_OAUTHBEARER_ASSERTION_ALGORITHM_ES256 ?
+                RD_KAFKA_CRYPTO_ES256:RD_KAFKA_CRYPTO_RS256,
+              unsigned_token,strlen(unsigned_token),&sig,&siglen,
+              crypto_error,sizeof(crypto_error))) {
+                rd_kafka_log(rk,LOG_ERR,"JWT","%s",crypto_error);
                 goto cleanup;
         }
 
@@ -591,10 +557,11 @@ cleanup:
                 rd_free(payload_str); /* rd_malloc was used */
         }
 
-        if (pkey)
-                EVP_PKEY_free(pkey);
-        if (mdctx)
-                EVP_MD_CTX_free(mdctx);
+        rd_kafka_crypto_key_destroy(pkey);
+        if(key_file) {
+                rd_kafka_crypto_wipe(key_file,key_len);
+                rd_free(key_file);
+        }
 
         return result;
 }
