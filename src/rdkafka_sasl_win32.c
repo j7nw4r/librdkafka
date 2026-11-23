@@ -47,6 +47,10 @@
 #pragma comment(lib, "secur32.lib")
 #include <sspi.h>
 
+/* This file calls the W (wide) SSPI functions explicitly, so it does not
+ * depend on UNICODE: CMake builds define UNICODE only for MinGW, and the
+ * generic macros then resolved to the A functions with a wide target name. */
+
 
 #define RD_KAFKA_SASL_SSPI_CTX_ATTRS                                           \
         (ISC_REQ_CONFIDENTIALITY | ISC_REQ_REPLAY_DETECT |                     \
@@ -63,7 +67,8 @@
 typedef struct rd_kafka_sasl_win32_state_s {
         CredHandle *cred;
         CtxtHandle *ctx;
-        wchar_t principal[512]; /* Broker service principal and hostname */
+        WCHAR principal[512];     /* Broker service principal and hostname */
+        char principal_utf8[512]; /* The same, for diagnostics */
 } rd_kafka_sasl_win32_state_t;
 
 
@@ -111,10 +116,10 @@ static CredHandle *rd_kafka_sasl_sspi_cred_new(rd_kafka_transport_t *rktrans,
         TimeStamp expiry = {0, 0};
         SECURITY_STATUS sr;
         CredHandle *cred = rd_calloc(1, sizeof(*cred));
+        static WCHAR package[] = L"Kerberos";
 
-        sr = AcquireCredentialsHandle(NULL, __TEXT("Kerberos"),
-                                      SECPKG_CRED_OUTBOUND, NULL, NULL, NULL,
-                                      NULL, cred, &expiry);
+        sr = AcquireCredentialsHandleW(NULL, package, SECPKG_CRED_OUTBOUND,
+                                       NULL, NULL, NULL, NULL, cred, &expiry);
 
         if (sr != SEC_E_OK) {
                 rd_free(cred);
@@ -183,7 +188,7 @@ static int rd_kafka_sasl_sspi_continue(rd_kafka_transport_t *rktrans,
                 ctx = rd_calloc(1, sizeof(*ctx));
         }
 
-        sr = InitializeSecurityContext(
+        sr = InitializeSecurityContextW(
             state->cred, state->ctx, state->principal,
             RD_KAFKA_SASL_SSPI_CTX_ATTRS |
                 (state->ctx ? 0 : ISC_REQ_MUTUAL_AUTH | ISC_REQ_IDENTIFY),
@@ -216,8 +221,9 @@ static int rd_kafka_sasl_sspi_continue(rd_kafka_transport_t *rktrans,
                 return -1;
         default:
                 rd_snprintf(errstr, errstr_size,
-                            "InitializeSecurityContext "
+                            "InitializeSecurityContext for target %s "
                             "failed: %s (0x%x)",
+                            state->principal_utf8,
                             rd_kafka_sasl_sspi_err2str(sr), sr);
                 return -1;
         }
@@ -248,7 +254,7 @@ static int rd_kafka_sasl_win32_send_response(rd_kafka_transport_t *rktrans,
         int send_response;
         size_t namelen;
 
-        sr = QueryContextAttributes(state->ctx, SECPKG_ATTR_SIZES, &sizes);
+        sr = QueryContextAttributesW(state->ctx, SECPKG_ATTR_SIZES, &sizes);
         if (sr != SEC_E_OK) {
                 rd_snprintf(errstr, errstr_size,
                             "Send response failed: %s (0x%x)",
@@ -256,6 +262,8 @@ static int rd_kafka_sasl_win32_send_response(rd_kafka_transport_t *rktrans,
                 return -1;
         }
 
+        /* The A form keeps the wire format of earlier releases: the user name
+         * in the ANSI code page, NUL-terminated. */
         RD_MEMZERO(names);
         sr = QueryCredentialsAttributesA(state->cred, SECPKG_CRED_ATTR_NAMES,
                                          &names);
@@ -512,9 +520,19 @@ static int rd_kafka_sasl_win32_client_new(rd_kafka_transport_t *rktrans,
         state                       = rd_calloc(1, sizeof(*state));
         rktrans->rktrans_sasl.state = state;
 
-        _snwprintf(state->principal, RD_ARRAYSIZE(state->principal), L"%hs/%hs",
-                   rktrans->rktrans_rkb->rkb_rk->rk_conf.sasl.service_name,
-                   hostname);
+        rd_snprintf(state->principal_utf8, sizeof(state->principal_utf8),
+                    "%s/%s", rk->rk_conf.sasl.service_name, hostname);
+        if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                 state->principal_utf8, -1, state->principal,
+                                 (int)RD_ARRAYSIZE(state->principal))) {
+                rd_snprintf(errstr, errstr_size,
+                            "Invalid Kerberos target name \"%s\" "
+                            "(not UTF-8 or too long)",
+                            state->principal_utf8);
+                return -1;
+        }
+        rd_rkb_dbg(rktrans->rktrans_rkb, SECURITY, "SASL",
+                   "SSPI Kerberos target SPN: %s", state->principal_utf8);
 
         state->cred = rd_kafka_sasl_sspi_cred_new(rktrans, errstr, errstr_size);
         if (!state->cred)
