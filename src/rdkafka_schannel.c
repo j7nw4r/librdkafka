@@ -267,10 +267,12 @@ fail_no_public:
 }
 
 /* Open an existing identity without changing its store, properties or key.
- * The SHA-1 thumbprint is an identifier, not a certificate verification hash. */
+ * The SHA-1 thumbprint is an identifier, not a certificate verification hash.
+ */
 static int rd_kafka_schannel_select_identity(rd_kafka_schannel_config_t *cfg,
                                              const char *selector,
-                                             char *errstr, size_t errstr_size) {
+                                             char *errstr,
+                                             size_t errstr_size) {
         const char *thumbprint;
         DWORD location, property_size = 0;
         BYTE hash[20];
@@ -278,10 +280,10 @@ static int rd_kafka_schannel_select_identity(rd_kafka_schannel_config_t *cfg,
         CRYPT_KEY_PROV_INFO *key_info = NULL;
         size_t i;
         if (!strncmp(selector, "CurrentUser/My/", 15)) {
-                location = CERT_SYSTEM_STORE_CURRENT_USER;
+                location   = CERT_SYSTEM_STORE_CURRENT_USER;
                 thumbprint = selector + 15;
         } else if (!strncmp(selector, "LocalMachine/My/", 16)) {
-                location = CERT_SYSTEM_STORE_LOCAL_MACHINE;
+                location   = CERT_SYSTEM_STORE_LOCAL_MACHINE;
                 thumbprint = selector + 16;
         } else {
                 rd_snprintf(errstr, errstr_size,
@@ -290,29 +292,37 @@ static int rd_kafka_schannel_select_identity(rd_kafka_schannel_config_t *cfg,
                             "LocalMachine/My/<40-hex thumbprint>");
                 return -1;
         }
-        if (strlen(thumbprint) != 40) goto bad_thumbprint;
+        if (strlen(thumbprint) != 40)
+                goto bad_thumbprint;
         for (i = 0; i < sizeof(hash); i++) {
                 unsigned int value = 0;
                 size_t n;
                 for (n = 0; n < 2; n++) {
                         unsigned char c = (unsigned char)thumbprint[i * 2 + n];
                         unsigned int digit;
-                        if (c >= '0' && c <= '9') digit = c - '0';
-                        else if (c >= 'a' && c <= 'f') digit = c - 'a' + 10;
-                        else if (c >= 'A' && c <= 'F') digit = c - 'A' + 10;
-                        else goto bad_thumbprint;
+                        if (c >= '0' && c <= '9')
+                                digit = c - '0';
+                        else if (c >= 'a' && c <= 'f')
+                                digit = c - 'a' + 10;
+                        else if (c >= 'A' && c <= 'F')
+                                digit = c - 'A' + 10;
+                        else
+                                goto bad_thumbprint;
                         value = value * 16 + digit;
                 }
                 hash[i] = (BYTE)value;
         }
-        cfg->identity_store = CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, 0,
+        cfg->identity_store = CertOpenStore(
+            CERT_STORE_PROV_SYSTEM_W, 0, 0,
             location | CERT_STORE_OPEN_EXISTING_FLAG | CERT_STORE_READONLY_FLAG,
             L"My");
-        if (!cfg->identity_store) goto win_error;
-        hash_blob.cbData = sizeof(hash); hash_blob.pbData = hash;
-        cfg->identity = CertFindCertificateInStore(cfg->identity_store,
-            X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, 0, CERT_FIND_HASH,
-            &hash_blob, NULL);
+        if (!cfg->identity_store)
+                goto win_error;
+        hash_blob.cbData = sizeof(hash);
+        hash_blob.pbData = hash;
+        cfg->identity    = CertFindCertificateInStore(
+            cfg->identity_store, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, 0,
+            CERT_FIND_HASH, &hash_blob, NULL);
         if (!cfg->identity) {
                 rd_snprintf(errstr, errstr_size,
                             "ssl.schannel.certificate identity was not found "
@@ -322,19 +332,26 @@ static int rd_kafka_schannel_select_identity(rd_kafka_schannel_config_t *cfg,
         /* A named provider association is required; do not repair or persist
          * an ephemeral key to make Schannel acquisition work. */
         if (!CertGetCertificateContextProperty(cfg->identity,
-                CERT_KEY_PROV_INFO_PROP_ID, NULL, &property_size)) goto no_named_key;
+                                               CERT_KEY_PROV_INFO_PROP_ID, NULL,
+                                               &property_size))
+                goto no_named_key;
         key_info = rd_malloc(property_size);
         if (!CertGetCertificateContextProperty(cfg->identity,
-                CERT_KEY_PROV_INFO_PROP_ID, key_info, &property_size) ||
+                                               CERT_KEY_PROV_INFO_PROP_ID,
+                                               key_info, &property_size) ||
             !key_info->pwszContainerName || !*key_info->pwszContainerName) {
-                rd_free(key_info); goto no_named_key;
+                rd_free(key_info);
+                goto no_named_key;
         }
         rd_free(key_info);
-        if (!CryptAcquireCertificatePrivateKey(cfg->identity,
+        if (!CryptAcquireCertificatePrivateKey(
+                cfg->identity,
                 CRYPT_ACQUIRE_SILENT_FLAG | CRYPT_ACQUIRE_NO_HEALING |
-                CRYPT_ACQUIRE_COMPARE_KEY_FLAG | CRYPT_ACQUIRE_PREFER_NCRYPT_KEY_FLAG,
+                    CRYPT_ACQUIRE_COMPARE_KEY_FLAG |
+                    CRYPT_ACQUIRE_PREFER_NCRYPT_KEY_FLAG,
                 NULL, &cfg->selected_key, &cfg->selected_key_spec,
-                &cfg->release_selected_key)) goto win_error;
+                &cfg->release_selected_key))
+                goto win_error;
         return 0;
 bad_thumbprint:
         rd_snprintf(errstr, errstr_size,
@@ -348,7 +365,8 @@ no_named_key:
         return -1;
 win_error:
         rd_kafka_schannel_error(errstr, errstr_size,
-                               "read-only certificate identity lookup", GetLastError());
+                                "read-only certificate identity lookup",
+                                GetLastError());
         return -1;
 }
 
@@ -390,13 +408,14 @@ rd_kafka_schannel_ctx_init(rd_kafka_t *rk, char *errstr, size_t errstr_size) {
                         goto win_error;
         }
         if (conf->ssl.schannel_certificate) {
-                if (rd_kafka_schannel_select_identity(cfg,
-                        conf->ssl.schannel_certificate, errstr, errstr_size) == -1)
+                if (rd_kafka_schannel_select_identity(
+                        cfg, conf->ssl.schannel_certificate, errstr,
+                        errstr_size) == -1)
                         goto fail;
         } else if (conf->ssl.keystore_location) {
                 size_t file_size;
-                char *file      = rd_file_read(conf->ssl.keystore_location,
-                                               &file_size, RD_SCHANNEL_FILE_LIMIT);
+                char *file = rd_file_read(conf->ssl.keystore_location,
+                                          &file_size, RD_SCHANNEL_FILE_LIMIT);
                 WCHAR *password = NULL;
                 CRYPT_DATA_BLOB blob;
                 PCCERT_CONTEXT cert = NULL;
@@ -558,17 +577,19 @@ rd_kafka_schannel_ctx_init(rd_kafka_t *rk, char *errstr, size_t errstr_size) {
             NULL, &cfg->cred, &expiry);
         if (status != SEC_E_OK) {
                 if (cfg->identity && !conf->ssl.schannel_certificate &&
-                    (status == SEC_E_UNKNOWN_CREDENTIALS || status == SEC_E_NO_CREDENTIALS))
-                        rd_snprintf(errstr, errstr_size,
-                                    "Schannel cannot use this ephemeral "
-                                    "private-key identity (0x%08lx); use an "
-                                    "existing ssl.schannel.certificate identity. "
-                                    "No private key was persisted",
-                                    (unsigned long)status);
+                    (status == SEC_E_UNKNOWN_CREDENTIALS ||
+                     status == SEC_E_NO_CREDENTIALS))
+                        rd_snprintf(
+                            errstr, errstr_size,
+                            "Schannel cannot use this ephemeral "
+                            "private-key identity (0x%08lx); use an "
+                            "existing ssl.schannel.certificate identity. "
+                            "No private key was persisted",
+                            (unsigned long)status);
                 else
                         rd_kafka_schannel_error(errstr, errstr_size,
-                                               "credential acquisition",
-                                               (unsigned long)status);
+                                                "credential acquisition",
+                                                (unsigned long)status);
                 goto fail;
         }
         cfg->have_cred    = rd_true;
