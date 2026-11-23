@@ -93,6 +93,13 @@ static int codecs(void) {
                 CHECK(out && !strcmp(out, "-_8"));
                 free(out);
         }
+        {
+                rd_chariov_t in = {.ptr  = "x",
+                                   .size = (size_t)(INT_MAX / 4) * 3 + 1},
+                             out;
+                rd_base64_encode(&in, &out);
+                CHECK(out.ptr == NULL && out.size == 0);
+        }
         return 0;
 }
 static int signatures(int argc, char **argv) {

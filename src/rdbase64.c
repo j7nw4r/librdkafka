@@ -81,8 +81,8 @@ void rd_base64_encode(const rd_chariov_t *in, rd_chariov_t *out) {
         size_t max_len;
 
         out->size = 0;
-        /* The encoder uses an int input length. */
-        if (in->size > INT_MAX) {
+        /* Both input and the encoded return length must fit int. */
+        if (in->size > (size_t)(INT_MAX / 4) * 3) {
                 out->ptr = NULL;
                 return;
         }
