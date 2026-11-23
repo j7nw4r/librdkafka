@@ -441,6 +441,7 @@ extern int unittest_assignment(void);
 #if WITH_SSL
 extern int unittest_ssl(void);
 #endif
+extern int unittest_cert_store_selector(void);
 
 int rd_unittest(void) {
         int fails = 0;
@@ -495,6 +496,7 @@ int rd_unittest(void) {
             {"share_acknowledge", unittest_share_acknowledge},
             {"msgset_errors", rd_kafka_unittest_msgset_errors},
             {"feature", unittest_feature},
+            {"cert_store_selector", unittest_cert_store_selector},
 #if WITH_SSL
             {"ssl", unittest_ssl},
 #endif

@@ -233,6 +233,39 @@ static rd_bool_t rd_http_curl_supports_capath(const char *backend) {
              !strncmp(backend, "wolfSSL/", 8));
 }
 
+/* True if \p backend (curl_version_info()->ssl_version) names Schannel as the
+ * active backend. MultiSSL builds put inactive backends in parentheses. */
+static rd_bool_t rd_http_curl_schannel_active(const char *backend) {
+        const char *p = backend;
+        while (p && (p = strstr(p, "Schannel"))) {
+                if (p == backend || p[-1] != '(')
+                        return rd_true;
+                p++;
+        }
+        return rd_false;
+}
+
+/**
+ * @returns NULL if this libcurl can apply \p revocation_check
+ *          (`https.revocation.check`), else the reason it cannot.
+ */
+const char *rd_http_revocation_unsupported(int revocation_check) {
+        const curl_version_info_data *version;
+        if (revocation_check == RD_KAFKA_HTTPS_REVOCATION_DEFAULT)
+                return NULL;
+#ifndef CURLSSLOPT_REVOKE_BEST_EFFORT
+        if (revocation_check == RD_KAFKA_HTTPS_REVOCATION_BEST_EFFORT)
+                return "https.revocation.check=best_effort requires "
+                       "libcurl >= 7.70.0";
+#endif
+        version = curl_version_info(CURLVERSION_NOW);
+        if (!rd_http_curl_schannel_active(version ? version->ssl_version
+                                                  : NULL))
+                return "https.revocation.check=best_effort or none requires "
+                       "libcurl with the Schannel TLS backend";
+        return NULL;
+}
+
 /* HTTP TLS is owned by libcurl, independently of the broker TLS backend.
  * Never cast a Schannel/GnuTLS native context to SSL_CTX. Explicit trust
  * configuration must either be applied successfully or fail initialization. */
@@ -247,6 +280,19 @@ static CURLcode rd_http_ssl_configure(rd_kafka_t *rk, CURL *curl) {
         result = curl_easy_setopt(curl, (option), (value)); \
         if (result != CURLE_OK) return result; \
 } while (0)
+        if (rk->rk_conf.https.revocation_check !=
+            RD_KAFKA_HTTPS_REVOCATION_DEFAULT) {
+                long options = CURLSSLOPT_NO_REVOKE;
+                if (rd_http_revocation_unsupported(
+                        rk->rk_conf.https.revocation_check))
+                        return CURLE_NOT_BUILT_IN;
+#ifdef CURLSSLOPT_REVOKE_BEST_EFFORT
+                if (rk->rk_conf.https.revocation_check ==
+                    RD_KAFKA_HTTPS_REVOCATION_BEST_EFFORT)
+                        options = CURLSSLOPT_REVOKE_BEST_EFFORT;
+#endif
+                SET_TRUST(CURLOPT_SSL_OPTIONS, options);
+        }
         if (!force_probe && rk->rk_conf.https.ca_location) {
                 rd_bool_t directory;
                 if (!rd_file_stat(rk->rk_conf.https.ca_location, &directory))
@@ -855,6 +901,15 @@ int unittest_http_get_params_append(void) {
 
 int unittest_http(void) {
         int fails = 0;
+        RD_UT_ASSERT(rd_http_curl_schannel_active("Schannel"),
+                     "Schannel is the active curl backend");
+        RD_UT_ASSERT(rd_http_curl_schannel_active("(OpenSSL/3.0.8) Schannel"),
+                     "MultiSSL with active Schannel");
+        RD_UT_ASSERT(!rd_http_curl_schannel_active("OpenSSL/3.0.8 (Schannel)"),
+                     "MultiSSL with inactive Schannel");
+        RD_UT_ASSERT(!rd_http_curl_schannel_active("OpenSSL/3.5.9"),
+                     "OpenSSL curl backend");
+        RD_UT_ASSERT(!rd_http_curl_schannel_active(NULL), "curl without TLS");
         RD_UT_ASSERT(!rd_http_curl_supports_capath("Schannel"),
                      "Schannel HTTPS must not receive unsupported CAPATH");
         RD_UT_ASSERT(!rd_http_curl_supports_capath("Rustls/0.23"),

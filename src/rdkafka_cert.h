@@ -56,6 +56,17 @@ typedef struct rd_kafka_cert_s {
 #endif
 } rd_kafka_cert_t;
 
+typedef enum {
+        RD_KAFKA_CERT_STORE_CURRENT_USER,
+        RD_KAFKA_CERT_STORE_LOCAL_MACHINE
+} rd_kafka_cert_store_location_t;
+
+int rd_kafka_cert_store_selector_parse(const char *selector,
+                                       rd_kafka_cert_store_location_t *location,
+                                       unsigned char thumbprint[20],
+                                       char *errstr,
+                                       size_t errstr_size);
+
 void rd_kafka_conf_cert_dtor(int scope, void *pconf);
 void rd_kafka_conf_cert_copy(int scope,
                              void *pdst,

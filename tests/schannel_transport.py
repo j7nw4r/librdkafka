@@ -163,6 +163,12 @@ def main():
         if os.name == "nt" and not runner:
             with temporary_windows_identities(root) as selectors:
                 run("read-only My identity verified mTLS", selector=selectors["client"])
+                # PowerShell path form, other case, spaced thumbprint. The
+                # U+200E case is a unit test: argv uses the ANSI code page.
+                location, store, thumbprint = selectors["client"].split("/")
+                spaced = " ".join(thumbprint[i:i + 2] for i in range(0, len(thumbprint), 2))
+                run("ssl.certificate.store PowerShell selector form",
+                    selector="Cert:\\" + "\\".join((location.lower(), store.upper(), spaced.lower())))
                 run("memory CA duplicate/clear verified mTLS", selector=selectors["client"], memory_ca=True)
                 run("cancellation discards pending prefix", selector=selectors["client"], cancel=True)
                 run("wrong hostname", selector=selectors["client"], hostname="127.0.0.1", reject=True)

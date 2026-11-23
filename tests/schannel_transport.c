@@ -169,7 +169,7 @@ int main(int argc, char **argv) {
                           sizeof(error)));
         }
         if (!strncmp(argv[2], "store:", 6)) {
-                CHECK(set(conf, "ssl.schannel.certificate", argv[2] + 6, error,
+                CHECK(set(conf, "ssl.certificate.store", argv[2] + 6, error,
                           sizeof(error)));
         } else if (argv[2][0] == '@') {
                 CHECK(set(conf, "ssl.keystore.location", argv[2] + 1, error,

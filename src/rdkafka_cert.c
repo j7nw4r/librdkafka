@@ -34,6 +34,9 @@
 
 #include "rdkafka_int.h"
 #include "rdkafka_transport_int.h"
+#include "rdunittest.h"
+
+#include <ctype.h>
 
 
 #if WITH_SSL
@@ -474,6 +477,25 @@ static int rd_kafka_schannel_space(char c) {
         return c == ' ' || c == '\t' || c == '\r' || c == '\n';
 }
 
+/* Windows message text for a status code, without the trailing period and
+ * line break. */
+const char *
+rd_kafka_schannel_status_text(unsigned long status, char *buf, size_t size) {
+        size_t len;
+        buf[0] = '\0';
+        if (!FormatMessageA(
+                FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                NULL, (DWORD)status, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                buf, (DWORD)size, NULL))
+                buf[0] = '\0';
+        len = strlen(buf);
+        while (len > 0 && strchr(" .\r\n", buf[len - 1]))
+                buf[--len] = '\0';
+        if (!len)
+                rd_snprintf(buf, size, "no Windows message text");
+        return buf;
+}
+
 int rd_kafka_schannel_add_certs(HCERTSTORE store, const void *data, size_t size,
                                rd_kafka_cert_enc_t encoding,
                                PCCERT_CONTEXT *first, char *errstr,
@@ -532,10 +554,16 @@ int rd_kafka_schannel_add_certs(HCERTSTORE store, const void *data, size_t size,
         if (!count) goto fail;
         ok = 1;
         goto done;
-fail:
+fail: {
+        char text[256];
+        unsigned long status = (unsigned long)GetLastError();
         rd_snprintf(errstr, errstr_size,
-                    "Schannel rejected certificate encoding (PEM chain or DER required, max 16 MiB; error 0x%08lx)",
-                    (unsigned long)GetLastError());
+                    "Schannel rejected certificate encoding (PEM "
+                    "chain or DER required, max 16 MiB): %s "
+                    "(0x%08lx)",
+                    rd_kafka_schannel_status_text(status, text, sizeof(text)),
+                    status);
+}
         if (first && *first) {
                 CertFreeCertificateContext(*first); *first = NULL;
         }
@@ -587,9 +615,15 @@ fail:
         if (*key) NCryptFreeObject(*key);
         if (*provider) NCryptFreeObject(*provider);
         *key = 0; *provider = 0;
-        rd_snprintf(errstr, errstr_size,
-                    "Schannel requires an unencrypted PKCS#8 private key (PEM/DER); CNG import failed 0x%08lx",
-                    (unsigned long)status);
+        {
+                char text[256];
+                rd_snprintf(errstr, errstr_size,
+                            "Schannel requires an unencrypted PKCS#8 private "
+                            "key (PEM/DER); CNG import failed: %s (0x%08lx)",
+                            rd_kafka_schannel_status_text((unsigned long)status,
+                                                          text, sizeof(text)),
+                            (unsigned long)status);
+        }
         return -1;
 }
 
@@ -639,6 +673,152 @@ fail:
  *        librdkafka was built with OpenSSL or not.
  * @{
  */
+
+/**
+ * @brief Parse an `ssl.certificate.store` selector:
+ *        [Cert:][/]{CurrentUser|LocalMachine}/My/THUMBPRINT.
+ *
+ * Accepts `\` or `/`, any case, and ignores spaces and the invisible
+ * marks (U+200E, U+200F, U+FEFF) that copying from the certificate
+ * manager inserts.
+ *
+ * @returns 0 with \p location and \p thumbprint set, else -1 and \p errstr.
+ */
+int rd_kafka_cert_store_selector_parse(const char *selector,
+                                       rd_kafka_cert_store_location_t *location,
+                                       unsigned char thumbprint[20],
+                                       char *errstr,
+                                       size_t errstr_size) {
+        char norm[256];
+        const unsigned char *s = (const unsigned char *)selector;
+        size_t n               = 0;
+        char *path, *store, *hex;
+        size_t i;
+
+        while (*s) {
+                if ((s[0] == 0xe2 && s[1] == 0x80 &&
+                     (s[2] == 0x8e || s[2] == 0x8f)) ||
+                    (s[0] == 0xef && s[1] == 0xbb && s[2] == 0xbf)) {
+                        s += 3;
+                        continue;
+                }
+                if (*s == ' ' || *s == '\t') {
+                        s++;
+                        continue;
+                }
+                if (n + 1 >= sizeof(norm))
+                        goto bad_format;
+                norm[n++] = *s == '\\' ? '/' : (char)tolower(*s);
+                s++;
+        }
+        norm[n] = '\0';
+
+        path = norm;
+        if (!strncmp(path, "cert:", 5))
+                path += 5;
+        if (*path == '/')
+                path++;
+        if (!strncmp(path, "currentuser/", 12)) {
+                *location = RD_KAFKA_CERT_STORE_CURRENT_USER;
+                store     = path + 12;
+        } else if (!strncmp(path, "localmachine/", 13)) {
+                *location = RD_KAFKA_CERT_STORE_LOCAL_MACHINE;
+                store     = path + 13;
+        } else
+                goto bad_format;
+        if (!(hex = strchr(store, '/')))
+                goto bad_format;
+        *hex++ = '\0';
+        if (strcmp(store, "my")) {
+                rd_snprintf(errstr, errstr_size,
+                            "ssl.certificate.store supports only the My "
+                            "(personal) store, not \"%s\"",
+                            store);
+                return -1;
+        }
+        if (strlen(hex) != 40 || strspn(hex, "0123456789abcdef") != 40) {
+                rd_snprintf(errstr, errstr_size,
+                            "ssl.certificate.store thumbprint must be 40 "
+                            "hexadecimal digits, not \"%s\"",
+                            hex);
+                return -1;
+        }
+        for (i = 0; i < 20; i++) {
+                char byte[3]  = {hex[i * 2], hex[i * 2 + 1], '\0'};
+                thumbprint[i] = (unsigned char)strtoul(byte, NULL, 16);
+        }
+        return 0;
+
+bad_format:
+        rd_snprintf(errstr, errstr_size,
+                    "ssl.certificate.store must be "
+                    "CurrentUser/My/<thumbprint> or "
+                    "LocalMachine/My/<thumbprint>");
+        return -1;
+}
+
+/**
+ * @brief Selector parser variants, in particular as copied from PowerShell
+ *        and the certificate manager.
+ */
+int unittest_cert_store_selector(void) {
+        const struct {
+                const char *selector;
+                int ok;
+                rd_kafka_cert_store_location_t location;
+        } cases[] = {
+            {"CurrentUser/My/0123456789abcdef0123456789ABCDEF01234567", 1,
+             RD_KAFKA_CERT_STORE_CURRENT_USER},
+            {"localmachine\\my\\0123456789ABCDEF0123456789abcdef01234567", 1,
+             RD_KAFKA_CERT_STORE_LOCAL_MACHINE},
+            {"Cert:"
+             "\\LocalMachine\\My\\0123456789abcdef0123456789abcdef01234567",
+             1, RD_KAFKA_CERT_STORE_LOCAL_MACHINE},
+            {"Cert:/CurrentUser/MY/0123456789abcdef0123456789abcdef01234567", 1,
+             RD_KAFKA_CERT_STORE_CURRENT_USER},
+            /* MMC: leading U+200E and space-separated byte pairs. */
+            {"CurrentUser/My/\xe2\x80\x8e"
+             "01 23 45 67 89 ab cd ef 01 23 45 67 89 ab cd ef 01 23 45 67",
+             1, RD_KAFKA_CERT_STORE_CURRENT_USER},
+            {" CurrentUser / My / 0123456789abcdef0123456789abcdef01234567 ", 1,
+             RD_KAFKA_CERT_STORE_CURRENT_USER},
+            {"CurrentUser/Root/0123456789abcdef0123456789abcdef01234567", 0},
+            {"Users/My/0123456789abcdef0123456789abcdef01234567", 0},
+            {"CurrentUser/My/0123456789abcdef0123456789abcdef0123456", 0},
+            {"CurrentUser/My/0123456789abcdef0123456789abcdef0123456g", 0},
+            {"CurrentUser/My", 0},
+            {"", 0},
+        };
+        size_t i;
+
+        for (i = 0; i < RD_ARRAYSIZE(cases); i++) {
+                rd_kafka_cert_store_location_t location;
+                unsigned char hash[20];
+                char errstr[256] = "";
+                int r            = rd_kafka_cert_store_selector_parse(
+                    cases[i].selector, &location, hash, errstr, sizeof(errstr));
+                RD_UT_ASSERT((r == 0) == cases[i].ok,
+                             "case %" PRIusz " \"%s\": expected %s, got %s", i,
+                             cases[i].selector,
+                             cases[i].ok ? "success" : "failure",
+                             r == 0 ? "success" : errstr);
+                if (!cases[i].ok) {
+                        RD_UT_ASSERT(strstr(errstr, "ssl.certificate.store"),
+                                     "case %" PRIusz
+                                     ": error must name the "
+                                     "property: %s",
+                                     i, errstr);
+                        continue;
+                }
+                RD_UT_ASSERT(location == cases[i].location,
+                             "case %" PRIusz ": wrong store location", i);
+                RD_UT_ASSERT(hash[0] == 0x01 && hash[7] == 0xef &&
+                                 hash[19] == 0x67,
+                             "case %" PRIusz ": wrong thumbprint bytes", i);
+        }
+        RD_UT_PASS();
+}
+
 
 rd_kafka_conf_res_t rd_kafka_conf_set_ssl_cert(rd_kafka_conf_t *conf,
                                                rd_kafka_cert_type_t cert_type,

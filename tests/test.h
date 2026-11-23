@@ -36,8 +36,11 @@
 #ifndef WITH_CRYPTO
 #define WITH_CRYPTO WITH_SSL
 #endif
+#ifndef WITH_SCHANNEL
+#define WITH_SCHANNEL 0
+#endif
 #ifndef WITH_TLS
-#define WITH_TLS WITH_SSL
+#define WITH_TLS (WITH_SSL || WITH_SCHANNEL)
 #endif
 
 #include <stdio.h>

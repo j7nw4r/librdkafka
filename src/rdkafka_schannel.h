@@ -44,6 +44,8 @@ int rd_kafka_schannel_add_certs(HCERTSTORE store,
                                 PCCERT_CONTEXT *first,
                                 char *errstr,
                                 size_t errstr_size);
+const char *
+rd_kafka_schannel_status_text(unsigned long status, char *buf, size_t size);
 int rd_kafka_schannel_import_key(const void *data,
                                  size_t size,
                                  rd_kafka_cert_enc_t encoding,

@@ -129,7 +129,7 @@ ssl.client.auth=required
             cert = properties.pop('ssl.certificate.location', None)
             properties.pop('ssl.key.location', None)
             if cert:
-                properties['ssl.schannel.certificate'] = identities[Path(cert).stem]
+                properties['ssl.certificate.store'] = identities[Path(cert).stem]
         path = root / (name + '.conf')
         path.write_text(''.join(f'{key}={value}\n' for key, value in properties.items() if value is not None))
         return path

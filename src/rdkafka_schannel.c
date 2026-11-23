@@ -83,8 +83,10 @@ static void rd_kafka_schannel_error(char *errstr,
                                     size_t size,
                                     const char *operation,
                                     unsigned long status) {
-        rd_snprintf(errstr, size, "Schannel %s failed (0x%08lx)", operation,
-                    status);
+        char text[256];
+        rd_kafka_schannel_status_text(status, text, sizeof(text));
+        rd_snprintf(errstr, size, "Schannel %s failed: %s (0x%08lx)", operation,
+                    text, status);
 }
 
 static int rd_kafka_schannel_copy_store(HCERTSTORE dest,
@@ -107,7 +109,9 @@ static int rd_kafka_schannel_copy_store(HCERTSTORE dest,
         return count;
 }
 
+/* \p property names the file property in error messages. */
 static int rd_kafka_schannel_read_certs(HCERTSTORE store,
+                                        const char *property,
                                         const char *path,
                                         const char *pem,
                                         PCCERT_CONTEXT *first,
@@ -119,11 +123,26 @@ static int rd_kafka_schannel_read_certs(HCERTSTORE store,
         if (pem)
                 size = strlen(pem);
         else {
+                rd_bool_t directory;
+                if (!rd_file_stat(path, &directory)) {
+                        rd_snprintf(errstr, errstr_size,
+                                    "%s: file \"%s\" does not exist", property,
+                                    path);
+                        return -1;
+                }
+                if (directory) {
+                        rd_snprintf(errstr, errstr_size,
+                                    "%s: \"%s\" is a directory; Schannel "
+                                    "needs one PEM file",
+                                    property, path);
+                        return -1;
+                }
                 file = rd_file_read(path, &size, RD_SCHANNEL_FILE_LIMIT);
                 if (!file) {
                         rd_snprintf(errstr, errstr_size,
-                                    "Schannel could not read certificate file "
-                                    "(max 16 MiB)");
+                                    "%s: cannot read \"%s\" (unreadable or "
+                                    "larger than 16 MiB)",
+                                    property, path);
                         return -1;
                 }
                 pem = file;
@@ -161,35 +180,33 @@ static void rd_kafka_schannel_config_free(rd_kafka_schannel_config_t *cfg) {
         rd_free(cfg);
 }
 
+/* OpenSSL-only properties fail at rd_kafka_conf_set(); these checks depend
+ * on values or on combinations of properties. */
 static int rd_kafka_schannel_validate_options(rd_kafka_t *rk,
                                               char *errstr,
                                               size_t errstr_size) {
-        const char *options[] = {
-            "ssl.cipher.suites",         "ssl.curves.list",
-            "ssl.sigalgs.list",          "ssl.providers",
-            "ssl.engine.location",       "ssl.engine.id",
-            "ssl.key.password",          "ssl.crl.location",
-            "ssl.ca.certificate.stores", NULL};
-        const char **option;
         rd_kafka_conf_t *c = &rk->rk_conf;
-        for (option = options; *option; option++) {
-                if (rd_kafka_conf_is_modified(c, *option)) {
-                        rd_snprintf(errstr, errstr_size,
-                                    "%s is unsupported by Schannel", *option);
-                        return -1;
-                }
-        }
-        if (c->ssl.cert_verify_cb || c->ssl.engine_callback_data) {
+        if (!c->ssl.enable_verify) {
                 rd_snprintf(errstr, errstr_size,
-                            "OpenSSL certificate/engine callbacks are "
-                            "unsupported by Schannel");
+                            "enable.ssl.certificate.verification=false is "
+                            "unsupported by Schannel: it always verifies the "
+                            "broker certificate");
                 return -1;
         }
-        if (!c->ssl.enable_verify ||
-            c->ssl.endpoint_identification != RD_KAFKA_SSL_ENDPOINT_ID_HTTPS) {
-                rd_snprintf(
-                    errstr, errstr_size,
-                    "Schannel requires certificate and hostname verification");
+        if (c->ssl.endpoint_identification != RD_KAFKA_SSL_ENDPOINT_ID_HTTPS) {
+                rd_snprintf(errstr, errstr_size,
+                            "ssl.endpoint.identification.algorithm=none is "
+                            "unsupported by Schannel: it always verifies the "
+                            "broker hostname");
+                return -1;
+        }
+        if (c->ssl.ca_cert_stores &&
+            rd_strcasecmp(c->ssl.ca_cert_stores, "Root")) {
+                rd_snprintf(errstr, errstr_size,
+                            "ssl.ca.certificate.stores=%s is unsupported by "
+                            "Schannel: only Root (Windows system trust) is "
+                            "supported",
+                            c->ssl.ca_cert_stores);
                 return -1;
         }
         if ((!!c->ssl.ca + !!c->ssl.ca_pem + !!c->ssl.ca_location) > 1 ||
@@ -197,7 +214,9 @@ static int rd_kafka_schannel_validate_options(rd_kafka_t *rk,
             (!!c->ssl.key + !!c->ssl.key_pem + !!c->ssl.key_location) > 1) {
                 rd_snprintf(errstr, errstr_size,
                             "Schannel requires one source for each CA, "
-                            "certificate and private key");
+                            "certificate and private key: set only one of "
+                            "the *.location, *.pem and set_ssl_cert() "
+                            "inputs for each");
                 return -1;
         }
         if (c->ssl.ca_location && !strcmp(c->ssl.ca_location, "probe")) {
@@ -206,12 +225,12 @@ static int rd_kafka_schannel_validate_options(rd_kafka_t *rk,
                             "leave unset for system trust");
                 return -1;
         }
-        if (c->ssl.schannel_certificate &&
+        if (c->ssl.cert_store &&
             (c->ssl.keystore_location || c->ssl.cert || c->ssl.cert_pem ||
              c->ssl.cert_location || c->ssl.key || c->ssl.key_pem ||
              c->ssl.key_location)) {
                 rd_snprintf(errstr, errstr_size,
-                            "ssl.schannel.certificate is mutually exclusive "
+                            "ssl.certificate.store is mutually exclusive "
                             "with certificate/key/PKCS#12 imports");
                 return -1;
         }
@@ -259,10 +278,9 @@ static int rd_kafka_schannel_bind_key(rd_kafka_schannel_config_t *cfg,
 fail:
         rd_free(public_key);
 fail_no_public:
-        rd_snprintf(errstr, errstr_size,
-                    "Schannel certificate/private key mismatch or binding "
-                    "failed (0x%08lx)",
-                    (unsigned long)GetLastError());
+        rd_kafka_schannel_error(errstr, errstr_size,
+                                "certificate/private key match or binding",
+                                GetLastError());
         return -1;
 }
 
@@ -273,45 +291,17 @@ static int rd_kafka_schannel_select_identity(rd_kafka_schannel_config_t *cfg,
                                              const char *selector,
                                              char *errstr,
                                              size_t errstr_size) {
-        const char *thumbprint;
+        rd_kafka_cert_store_location_t store_location;
         DWORD location, property_size = 0;
         BYTE hash[20];
         CRYPT_HASH_BLOB hash_blob;
         CRYPT_KEY_PROV_INFO *key_info = NULL;
-        size_t i;
-        if (!strncmp(selector, "CurrentUser/My/", 15)) {
-                location   = CERT_SYSTEM_STORE_CURRENT_USER;
-                thumbprint = selector + 15;
-        } else if (!strncmp(selector, "LocalMachine/My/", 16)) {
-                location   = CERT_SYSTEM_STORE_LOCAL_MACHINE;
-                thumbprint = selector + 16;
-        } else {
-                rd_snprintf(errstr, errstr_size,
-                            "ssl.schannel.certificate requires "
-                            "CurrentUser/My/<40-hex thumbprint> or "
-                            "LocalMachine/My/<40-hex thumbprint>");
+        if (rd_kafka_cert_store_selector_parse(selector, &store_location, hash,
+                                               errstr, errstr_size) == -1)
                 return -1;
-        }
-        if (strlen(thumbprint) != 40)
-                goto bad_thumbprint;
-        for (i = 0; i < sizeof(hash); i++) {
-                unsigned int value = 0;
-                size_t n;
-                for (n = 0; n < 2; n++) {
-                        unsigned char c = (unsigned char)thumbprint[i * 2 + n];
-                        unsigned int digit;
-                        if (c >= '0' && c <= '9')
-                                digit = c - '0';
-                        else if (c >= 'a' && c <= 'f')
-                                digit = c - 'a' + 10;
-                        else if (c >= 'A' && c <= 'F')
-                                digit = c - 'A' + 10;
-                        else
-                                goto bad_thumbprint;
-                        value = value * 16 + digit;
-                }
-                hash[i] = (BYTE)value;
-        }
+        location = store_location == RD_KAFKA_CERT_STORE_LOCAL_MACHINE
+                       ? CERT_SYSTEM_STORE_LOCAL_MACHINE
+                       : CERT_SYSTEM_STORE_CURRENT_USER;
         cfg->identity_store = CertOpenStore(
             CERT_STORE_PROV_SYSTEM_W, 0, 0,
             location | CERT_STORE_OPEN_EXISTING_FLAG | CERT_STORE_READONLY_FLAG,
@@ -325,8 +315,11 @@ static int rd_kafka_schannel_select_identity(rd_kafka_schannel_config_t *cfg,
             CERT_FIND_HASH, &hash_blob, NULL);
         if (!cfg->identity) {
                 rd_snprintf(errstr, errstr_size,
-                            "ssl.schannel.certificate identity was not found "
-                            "in the selected read-only My store");
+                            "ssl.certificate.store: no certificate with this "
+                            "thumbprint in the %s My store",
+                            location == CERT_SYSTEM_STORE_LOCAL_MACHINE
+                                ? "LocalMachine"
+                                : "CurrentUser");
                 return -1;
         }
         /* A named provider association is required; do not repair or persist
@@ -353,19 +346,16 @@ static int rd_kafka_schannel_select_identity(rd_kafka_schannel_config_t *cfg,
                 &cfg->release_selected_key))
                 goto win_error;
         return 0;
-bad_thumbprint:
-        rd_snprintf(errstr, errstr_size,
-                    "ssl.schannel.certificate requires exactly 40 hexadecimal "
-                    "thumbprint characters");
-        return -1;
 no_named_key:
         rd_snprintf(errstr, errstr_size,
-                    "ssl.schannel.certificate requires an existing named "
-                    "private-key association accessible to Schannel");
+                    "ssl.certificate.store: the certificate has no private "
+                    "key in a named key container (import it with its "
+                    "private key, for example with Import-PfxCertificate)");
         return -1;
 win_error:
         rd_kafka_schannel_error(errstr, errstr_size,
-                                "read-only certificate identity lookup",
+                                "ssl.certificate.store lookup or private-key "
+                                "access",
                                 GetLastError());
         return -1;
 }
@@ -392,9 +382,11 @@ rd_kafka_schannel_ctx_init(rd_kafka_t *rk, char *errstr, size_t errstr_size) {
                                 cfg->roots, conf->ssl.ca->win_store, NULL) <= 0)
                                 goto win_error;
                 } else if (rd_kafka_schannel_read_certs(
-                               cfg->roots, conf->ssl.ca_location,
-                               conf->ssl.ca_pem, NULL, errstr,
-                               errstr_size) == -1)
+                               cfg->roots,
+                               conf->ssl.ca_pem ? "ssl.ca.pem"
+                                                : "ssl.ca.location",
+                               conf->ssl.ca_location, conf->ssl.ca_pem, NULL,
+                               errstr, errstr_size) == -1)
                         goto fail;
                 memset(&engine, 0, sizeof(engine));
                 engine.cbSize         = sizeof(engine);
@@ -407,10 +399,9 @@ rd_kafka_schannel_ctx_init(rd_kafka_t *rk, char *errstr, size_t errstr_size) {
                 if (!CertCreateCertificateChainEngine(&engine, &cfg->engine))
                         goto win_error;
         }
-        if (conf->ssl.schannel_certificate) {
+        if (conf->ssl.cert_store) {
                 if (rd_kafka_schannel_select_identity(
-                        cfg, conf->ssl.schannel_certificate, errstr,
-                        errstr_size) == -1)
+                        cfg, conf->ssl.cert_store, errstr, errstr_size) == -1)
                         goto fail;
         } else if (conf->ssl.keystore_location) {
                 size_t file_size;
@@ -422,7 +413,10 @@ rd_kafka_schannel_ctx_init(rd_kafka_t *rk, char *errstr, size_t errstr_size) {
                 int count;
                 if (!file) {
                         rd_snprintf(errstr, errstr_size,
-                                    "Schannel could not read PKCS#12 keystore");
+                                    "ssl.keystore.location: cannot read \"%s\" "
+                                    "(missing, unreadable or larger than "
+                                    "16 MiB)",
+                                    conf->ssl.keystore_location);
                         goto fail;
                 }
                 count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
@@ -484,12 +478,11 @@ rd_kafka_schannel_ctx_init(rd_kafka_t *rk, char *errstr, size_t errstr_size) {
                         }
                 }
                 if (!cfg->identity) {
-                        rd_snprintf(
-                            errstr, errstr_size,
-                            "Schannel ephemeral PKCS#12 import has no "
-                            "usable private-key identity; use an "
-                            "existing ssl.schannel.certificate identity. "
-                            "No private key was persisted");
+                        rd_snprintf(errstr, errstr_size,
+                                    "Schannel ephemeral PKCS#12 import has no "
+                                    "usable private-key identity; use an "
+                                    "existing ssl.certificate.store identity. "
+                                    "No private key was persisted");
                         goto fail;
                 }
                 if (cfg->own_key &&
@@ -512,9 +505,11 @@ rd_kafka_schannel_ctx_init(rd_kafka_t *rk, char *errstr, size_t errstr_size) {
                                 goto win_error;
                 } else if (conf->ssl.cert_location || conf->ssl.cert_pem) {
                         if (rd_kafka_schannel_read_certs(
-                                cfg->identity_store, conf->ssl.cert_location,
-                                conf->ssl.cert_pem, &cfg->identity, errstr,
-                                errstr_size) == -1)
+                                cfg->identity_store,
+                                conf->ssl.cert_pem ? "ssl.certificate.pem"
+                                                   : "ssl.certificate.location",
+                                conf->ssl.cert_location, conf->ssl.cert_pem,
+                                &cfg->identity, errstr, errstr_size) == -1)
                                 goto fail;
                 }
                 if (!cfg->identity) {
@@ -538,8 +533,11 @@ rd_kafka_schannel_ctx_init(rd_kafka_t *rk, char *errstr, size_t errstr_size) {
                                 key_data = key_file;
                                 if (!key_file) {
                                         rd_snprintf(errstr, errstr_size,
-                                                    "Schannel could not read "
-                                                    "client private key");
+                                                    "ssl.key.location: cannot "
+                                                    "read \"%s\" (missing, "
+                                                    "unreadable or larger "
+                                                    "than 16 MiB)",
+                                                    conf->ssl.key_location);
                                         goto fail;
                                 }
                         } else {
@@ -579,17 +577,20 @@ rd_kafka_schannel_ctx_init(rd_kafka_t *rk, char *errstr, size_t errstr_size) {
             NULL, UNISP_NAME_A, SECPKG_CRED_OUTBOUND, NULL, &credentials, NULL,
             NULL, &cfg->cred, &expiry);
         if (status != SEC_E_OK) {
-                if (cfg->identity && !conf->ssl.schannel_certificate &&
+                if (cfg->identity && !conf->ssl.cert_store &&
                     (status == SEC_E_UNKNOWN_CREDENTIALS ||
-                     status == SEC_E_NO_CREDENTIALS))
+                     status == SEC_E_NO_CREDENTIALS)) {
+                        char text[256];
                         rd_snprintf(
                             errstr, errstr_size,
                             "Schannel cannot use this ephemeral "
-                            "private-key identity (0x%08lx); use an "
-                            "existing ssl.schannel.certificate identity. "
+                            "private-key identity: %s (0x%08lx); use an "
+                            "existing ssl.certificate.store identity. "
                             "No private key was persisted",
+                            rd_kafka_schannel_status_text((unsigned long)status,
+                                                          text, sizeof(text)),
                             (unsigned long)status);
-                else
+                } else
                         rd_kafka_schannel_error(errstr, errstr_size,
                                                 "credential acquisition",
                                                 (unsigned long)status);
