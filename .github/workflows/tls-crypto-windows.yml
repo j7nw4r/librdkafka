@@ -116,11 +116,13 @@ jobs:
           }
           $functions = & $dumpbin.FullName /IMPORTS $dll.FullName | Out-String
           if ($LASTEXITCODE -ne 0) { throw 'Function import audit failed' }
-          # Schannel uses the A SSPI functions; SASL GSSAPI (SSPI Kerberos)
-          # must use the W functions, because CMake does not define UNICODE.
-          foreach ($function in @('BCryptGenRandom','BCryptDeriveKeyPBKDF2','BCryptCreateHash','NCryptSignHash','InitializeSecurityContextA','InitializeSecurityContextW','AcquireCredentialsHandleW')) {
+          # Schannel and SASL GSSAPI (SSPI Kerberos) pass wide target names, so
+          # only the W InitializeSecurityContext may appear. CMake does not
+          # define UNICODE, so a generic SSPI call would import the A form.
+          foreach ($function in @('BCryptGenRandom','BCryptDeriveKeyPBKDF2','BCryptCreateHash','NCryptSignHash','InitializeSecurityContextW','AcquireCredentialsHandleW')) {
             if ($functions -notmatch [regex]::Escape($function)) { throw "Required backend function missing: $function" }
           }
+          if ($functions -match 'InitializeSecurityContextA') { throw 'InitializeSecurityContextA imported: an SSPI call passes a wide name to the A function' }
           $maps = Get-ChildItem build-shared -Recurse -Filter '*.map'
           if (!$maps) { throw 'Native link map missing' }
           foreach ($map in $maps) {

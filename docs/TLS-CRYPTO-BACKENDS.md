@@ -32,7 +32,8 @@ define `UNICODE`, passed the wide target SPN to `InitializeSecurityContextA`, an
 authentication failed with "Target unknown (0x80090303)". The Visual Studio
 project defines `UNICODE` and was not affected. With `debug=security` the client
 logs the target SPN. The Windows workflow checks that the shared DLL imports
-the W functions; it has no KDC, so a Kerberos round trip is not part of CI.
+the W functions and does not import `InitializeSecurityContextA` (Schannel also
+uses the W form). CI has no KDC, so a Kerberos round trip is not part of CI.
 
 The configure equivalents are `--with-tls-backend=openssl|schannel|none` and
 `--with-crypto-backend=openssl|bcrypt|none`. The existing Windows Visual Studio
