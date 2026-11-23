@@ -100,6 +100,11 @@ adds a CA to Root/CA trust stores. Production code only reads preprovisioned
 identities. Ephemeral import limitations are tested as explicit rejections. Native execution and Wine execution must be reported
 separately. `--runner wine` is supplementary compatibility execution only.
 
+Prerequisite: `tests/windows_certificate_store.py` runs `pwsh` (PowerShell 7)
+to provision and remove the test identities. Windows Server 2022 includes only
+Windows PowerShell 5.1 (`powershell.exe`), so install PowerShell 7 first.
+GitHub `windows-latest` runners include it.
+
 Build with the branch's Windows Schannel/BCrypt CMake configuration and backend
 test option, then run the Python command. Expect one PASS per case and a final
 all-cases PASS with exit status zero. This test proves TLS transport behavior;

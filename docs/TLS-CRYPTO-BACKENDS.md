@@ -148,8 +148,15 @@ python tests/tls_backend/acceptance.py --client build-static/backend-kafka-clien
 ```
 
 The last command requires a working Docker-compatible service and runs real
-Kafka Testcontainers; it fails when prerequisites are unavailable. On Windows,
-configure Schannel/BCrypt and use `build-static/Release/*.exe`, then run
+Kafka Testcontainers; it fails when prerequisites are unavailable.
+
+Windows prerequisite: `schannel_transport.py` and `native_java_kafka.py` use
+`tests/windows_certificate_store.py`, which runs `pwsh` (PowerShell 7) to
+provision and remove the test identities. Windows Server 2022 includes only
+Windows PowerShell 5.1 (`powershell.exe`), so install PowerShell 7 first.
+GitHub `windows-latest` runners include it.
+
+On Windows, configure Schannel/BCrypt and use `build-static/Release/*.exe`, then run
 `python tests/schannel_transport.py --client PATH_TO_EXE` and
 `python tests/tls_backend/native_java_kafka.py --client PATH_TO_KAFKA_CLIENT --cache TEMP_CACHE`.
 The Java fixture needs Java21 and exercises the production broker loop.
