@@ -70,7 +70,8 @@ static void set_cert_from_file(rd_kafka_conf_t *conf,
 }
 
 static void create_clients(rd_kafka_conf_t *conf) {
-        rd_kafka_t *rk[2];
+        rd_kafka_t *rk[2]  = {NULL, NULL};
+        rd_bool_t schannel = test_check_builtin("tls_schannel");
         char errstr[512];
         int i;
 
@@ -79,11 +80,20 @@ static void create_clients(rd_kafka_conf_t *conf) {
                 test_conf_set(copy, "security.protocol", "ssl");
                 rk[i] = rd_kafka_new(RD_KAFKA_PRODUCER, copy, errstr,
                                      sizeof(errstr));
+                if (!rk[i] && schannel && strstr(errstr, "ephemeral")) {
+                        /* Windows can refuse an in-memory key only after
+                         * the key and certificate matched. */
+                        TEST_SAY("Schannel refused the in-memory key: %s\n",
+                                 errstr);
+                        rd_kafka_conf_destroy(copy);
+                        continue;
+                }
                 TEST_ASSERT(rk[i], "Client %d with retained material: %s", i,
                             errstr);
         }
         for (i = 0; i < 2; i++)
-                rd_kafka_destroy(rk[i]);
+                if (rk[i])
+                        rd_kafka_destroy(rk[i]);
 }
 
 int main_0193_ssl_cert_setters(int argc, char **argv) {
