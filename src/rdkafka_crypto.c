@@ -141,9 +141,17 @@ void rd_kafka_crypto_key_destroy(rd_kafka_crypto_key_t *key) {
  * @name Unit tests
  *
  * Known-answer vectors from FIPS 180-4, RFC 4231 and RFC 6070/7914, plus a
- * fixed RS256 signature (PKCS#1 v1.5 is deterministic).
+ * fixed RS256 signature (PKCS#1 v1.5 is deterministic). ES256 is randomized,
+ * so OpenSSL builds verify it independently; other backends check the
+ * RFC 7518 R || S length only.
  */
 #include "rdunittest.h"
+#if WITH_CRYPTO_OPENSSL
+#include <openssl/bn.h>
+#include <openssl/ecdsa.h>
+#include <openssl/evp.h>
+#include <openssl/pem.h>
+#endif
 
 static const char ut_rsa_key[] =
     "-----BEGIN PRIVATE KEY-----\n"
@@ -173,6 +181,13 @@ static const char ut_rsa_key[] =
     "rmG4hY51IZjpsqfV7ByaqZ84V+R2HD4Dt/0IdRGJCzMyc0sdy4GL6RnV+rnUpdTl\n"
     "O++jEJqbCPemtWndakeVX3f/p47ZbWXpXJ9QEca3h2WMtpd2txsxnjvIJu2qpTYr\n"
     "6RD32qMY2AYKyF2JKlM6FOc=\n"
+    "-----END PRIVATE KEY-----\n";
+
+static const char ut_ec_key[] =
+    "-----BEGIN PRIVATE KEY-----\n"
+    "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgMbixBe7yizrdEN4K\n"
+    "xgFU4ZPfSFtluOzV03x2IdhgA8+hRANCAARn5fvFGJrHphVAXdObOkM4lCpJ43mi\n"
+    "Gmduw82WgpGF5leCDcQ0TzgMDsDC+DgGLkIUffnGMuP6FrlqV2IkESkk\n"
     "-----END PRIVATE KEY-----\n";
 
 static const char ut_rs256_sig[] =
@@ -220,6 +235,70 @@ static int ut_crypto_sign_rs256(void) {
         r = size == 256 && ut_hex_eq(sig, size, ut_rs256_sig);
         rd_free(sig);
         RD_UT_ASSERT(r, "RS256 signature is wrong (%" PRIusz " bytes)", size);
+        return 0;
+}
+
+#if WITH_CRYPTO_OPENSSL
+static rd_bool_t ut_es256_verify(const unsigned char *sig) {
+        BIO *bio = BIO_new_mem_buf(ut_ec_key, -1);
+        EVP_PKEY *pkey =
+            bio ? PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL) : NULL;
+        ECDSA_SIG *esig    = ECDSA_SIG_new();
+        EVP_MD_CTX *ctx    = EVP_MD_CTX_new();
+        unsigned char *der = NULL;
+        int der_len        = -1;
+        rd_bool_t ok       = rd_false;
+        if (pkey && esig && ctx &&
+            ECDSA_SIG_set0(esig, BN_bin2bn(sig, 32, NULL),
+                           BN_bin2bn(sig + 32, 32, NULL)) == 1)
+                der_len = i2d_ECDSA_SIG(esig, &der);
+        if (der_len > 0 &&
+            EVP_DigestVerifyInit(ctx, NULL, EVP_sha256(), NULL, pkey) == 1 &&
+            EVP_DigestVerify(ctx, der, (size_t)der_len,
+                             (const unsigned char *)ut_message,
+                             strlen(ut_message)) == 1)
+                ok = rd_true;
+        OPENSSL_free(der);
+        EVP_MD_CTX_free(ctx);
+        ECDSA_SIG_free(esig);
+        EVP_PKEY_free(pkey);
+        BIO_free(bio);
+        return ok;
+}
+#endif
+
+static int ut_crypto_sign_es256(void) {
+        rd_kafka_crypto_key_t *key;
+        unsigned char *sig = NULL;
+        size_t size        = 0;
+        char errstr[256];
+        int r;
+
+        key = rd_kafka_crypto_key_load(ut_ec_key, strlen(ut_ec_key), NULL,
+                                       errstr, sizeof(errstr));
+        RD_UT_ASSERT(key, "key import failed: %s", errstr);
+        r = rd_kafka_crypto_sign(key, RD_KAFKA_CRYPTO_ES256, ut_message,
+                                 strlen(ut_message), &sig, &size, errstr,
+                                 sizeof(errstr));
+        rd_kafka_crypto_key_destroy(key);
+        RD_UT_ASSERT(!r, "signing failed: %s", errstr);
+        r = size == 64;
+#if WITH_CRYPTO_OPENSSL
+        r = r && ut_es256_verify(sig);
+#endif
+        rd_free(sig);
+        RD_UT_ASSERT(r, "ES256 signature is wrong (%" PRIusz " bytes)", size);
+
+        key = rd_kafka_crypto_key_load(ut_rsa_key, strlen(ut_rsa_key), NULL,
+                                       errstr, sizeof(errstr));
+        RD_UT_ASSERT(key, "key import failed: %s", errstr);
+        sig = NULL;
+        r   = rd_kafka_crypto_sign(key, RD_KAFKA_CRYPTO_ES256, ut_message,
+                                   strlen(ut_message), &sig, &size, errstr,
+                                   sizeof(errstr));
+        rd_kafka_crypto_key_destroy(key);
+        RD_UT_ASSERT(r == -1 && !sig && !size,
+                     "ES256 with an RSA key must fail");
         return 0;
 }
 
@@ -314,7 +393,7 @@ int unittest_crypto(void) {
         RD_UT_ASSERT(!rd_kafka_crypto_key_load("invalid key", 11, NULL, errstr,
                                                sizeof(errstr)),
                      "invalid key must fail to load");
-        if (ut_crypto_sign_rs256())
+        if (ut_crypto_sign_rs256() || ut_crypto_sign_es256())
                 return 1;
 
         RD_UT_PASS();

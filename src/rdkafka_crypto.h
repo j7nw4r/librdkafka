@@ -107,8 +107,8 @@ int rd_kafka_crypto_pbkdf2(rd_kafka_crypto_hash_t,
 int rd_kafka_crypto_random(void *, size_t);
 rd_kafka_crypto_key_t *
 rd_kafka_crypto_key_load(const void *, size_t, const char *, char *, size_t);
-/* Both algorithms sign a SHA-256 digest. The caller frees *out with
- * rd_free(). */
+/* RS256 gives a PKCS#1 v1.5 signature and ES256 the 64-byte R || S form of
+ * RFC 7518 section 3.4. The caller frees *out with rd_free(). */
 int rd_kafka_crypto_sign(rd_kafka_crypto_key_t *,
                          rd_kafka_crypto_signature_t,
                          const void *,

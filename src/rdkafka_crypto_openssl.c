@@ -32,6 +32,9 @@
 #include <openssl/hmac.h>
 #include <openssl/rand.h>
 #include <openssl/pem.h>
+#if !defined(OPENSSL_NO_EC) && !defined(OPENSSL_NO_ECDSA)
+#include <openssl/ecdsa.h>
+#endif
 #include <limits.h>
 
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
@@ -154,6 +157,60 @@ static void key_destroy(rd_kafka_crypto_key_t *k) {
         rd_free(k);
 }
 
+#if !defined(OPENSSL_NO_EC) && !defined(OPENSSL_NO_ECDSA)
+static rd_bool_t is_p256_key(EVP_PKEY *key) {
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L && !defined(LIBRESSL_VERSION_NUMBER)
+        char name[80];
+        size_t name_len = 0;
+        return EVP_PKEY_is_a(key, "EC") == 1 &&
+               EVP_PKEY_get_group_name(key, name, sizeof(name), &name_len) ==
+                   1 &&
+               (!strcmp(name, "prime256v1") || !strcmp(name, "P-256") ||
+                !strcmp(name, "secp256r1"));
+#else
+        EC_KEY *ec;
+        int curve;
+        if (EVP_PKEY_base_id(key) != EVP_PKEY_EC)
+                return rd_false;
+        ec = EVP_PKEY_get1_EC_KEY(key);
+        if (!ec)
+                return rd_false;
+        curve = EC_GROUP_get_curve_name(EC_KEY_get0_group(ec));
+        EC_KEY_free(ec);
+        return curve == NID_X9_62_prime256v1;
+#endif
+}
+
+/**
+ * @brief Convert the DER ECDSA-Sig-Value in \p der to the 64-byte R || S
+ *        form of RFC 7518 section 3.4, in \p raw.
+ */
+static rd_bool_t
+es256_der_to_raw(const unsigned char *der, size_t size, unsigned char *raw) {
+        const unsigned char *q = der;
+        const BIGNUM *r, *s;
+        ECDSA_SIG *v = d2i_ECDSA_SIG(NULL, &q, (long)size);
+        rd_bool_t ok = rd_false;
+        if (!v || q != der + size)
+                goto done;
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+        ECDSA_SIG_get0(v, &r, &s);
+#else
+        r = v->r;
+        s = v->s;
+#endif
+        if (BN_num_bytes(r) > 32 || BN_num_bytes(s) > 32)
+                goto done;
+        memset(raw, 0, 64);
+        BN_bn2bin(r, raw + 32 - BN_num_bytes(r));
+        BN_bn2bin(s, raw + 64 - BN_num_bytes(s));
+        ok = rd_true;
+done:
+        ECDSA_SIG_free(v);
+        return ok;
+}
+#endif
+
 static int sign_data(rd_kafka_crypto_key_t *k,
                      rd_kafka_crypto_signature_t alg,
                      const void *p,
@@ -166,7 +223,17 @@ static int sign_data(rd_kafka_crypto_key_t *k,
         unsigned char *sig = NULL;
         size_t size        = 0;
         int ok             = 0;
-        if (alg != RD_KAFKA_CRYPTO_RS256 && alg != RD_KAFKA_CRYPTO_ES256)
+        if (alg == RD_KAFKA_CRYPTO_ES256) {
+#if !defined(OPENSSL_NO_EC) && !defined(OPENSSL_NO_ECDSA)
+                if (!is_p256_key(k->key)) {
+                        rd_snprintf(e, en, "ES256 requires a P-256 EC key");
+                        return -1;
+                }
+#else
+                rd_snprintf(e, en, "ES256 is not available: EC disabled");
+                return -1;
+#endif
+        } else if (alg != RD_KAFKA_CRYPTO_RS256)
                 goto done;
         ctx = EVP_MD_CTX_new();
         if (!md(RD_KAFKA_CRYPTO_SHA256) || !ctx ||
@@ -178,6 +245,18 @@ static int sign_data(rd_kafka_crypto_key_t *k,
         sig = rd_malloc(size);
         if (EVP_DigestSignFinal(ctx, sig, &size) != 1)
                 goto done;
+#if !defined(OPENSSL_NO_EC) && !defined(OPENSSL_NO_ECDSA)
+        if (alg == RD_KAFKA_CRYPTO_ES256) {
+                unsigned char *raw = rd_malloc(64);
+                if (!es256_der_to_raw(sig, size, raw)) {
+                        rd_free(raw);
+                        goto done;
+                }
+                rd_free(sig);
+                sig  = raw;
+                size = 64;
+        }
+#endif
         *out = sig;
         *on  = size;
         sig  = NULL;
