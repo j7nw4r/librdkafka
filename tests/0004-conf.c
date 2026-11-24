@@ -834,6 +834,13 @@ int main_0004_conf(int argc, char **argv) {
 
 #endif /* WITH_SSL */
 
+        TEST_ASSERT(test_check_builtin("auth_crypto") == WITH_CRYPTO &&
+                        test_check_builtin("auth_crypto_openssl") ==
+                            WITH_CRYPTO_OPENSSL,
+                    "builtin.features does not match WITH_CRYPTO=%d and "
+                    "WITH_CRYPTO_OPENSSL=%d",
+                    WITH_CRYPTO, WITH_CRYPTO_OPENSSL);
+
         /* Canonical int values, aliases, s2i-verified strings, doubles */
         {
                 static const struct {

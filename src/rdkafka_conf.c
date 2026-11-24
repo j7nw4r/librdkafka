@@ -199,8 +199,8 @@ struct rd_kafka_property {
 #else
 #define _UNSUPPORTED_OIDC                                                      \
         .unsupported =                                                         \
-            "OAuth/OIDC depends on libcurl and OpenSSL which were not "        \
-            "available at build time"
+            "OAuth/OIDC depends on libcurl and a crypto backend which were "   \
+            "not available at build time"
 #endif
 
 #if WITH_OAUTHBEARER_OIDC
@@ -208,8 +208,8 @@ struct rd_kafka_property {
 #else
 #define _UNSUPPORTED_HTTPS                                                     \
         .unsupported =                                                         \
-            "HTTPS calls depend on libcurl and OpenSSL which were not "        \
-            "available at build time"
+            "HTTPS calls depend on libcurl and a crypto backend which were "   \
+            "not available at build time"
 #endif
 
 #ifdef _WIN32
@@ -230,6 +230,15 @@ struct rd_kafka_property {
 #endif
 
 #define _UNSUPPORTED_OAUTHBEARER _UNSUPPORTED_SSL
+
+#if WITH_SASL_SCRAM
+#define _UNSUPPORTED_SCRAM .unsupported = NULL
+#else
+#define _UNSUPPORTED_SCRAM                                                     \
+        .unsupported =                                                         \
+            "SASL SCRAM depends on a crypto backend which was not "            \
+            "available at build time"
+#endif
 
 
 static rd_kafka_conf_res_t
@@ -376,8 +385,11 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
     {_RK_GLOBAL, "builtin.features", _RK_C_S2F, _RK(builtin_features),
      "Indicates the builtin features for this build of librdkafka. "
      "An application can either query this value or attempt to set it "
-     "with its list of required features to check for library support.",
-     0, 0x7fffffff, 0xffff,
+     "with its list of required features to check for library support. "
+     "`auth_crypto` means a crypto backend for SASL SCRAM, OIDC JWT signing "
+     "and SCRAM credential upserts, and `auth_crypto_openssl` names the "
+     "OpenSSL backend.",
+     0, 0x7fffffff, 0x7ffff,
      .s2i = {{0x1, "gzip", _UNSUPPORTED_ZLIB},
              {0x2, "snappy", _UNSUPPORTED_SNAPPY},
              {0x4, "ssl", _UNSUPPORTED_SSL},
@@ -386,7 +398,7 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
              {0x20, "lz4"},
              {0x40, "sasl_gssapi", _UNSUPPORTED_GSSAPI},
              {0x80, "sasl_plain"},
-             {0x100, "sasl_scram", _UNSUPPORTED_SSL},
+             {0x100, "sasl_scram", _UNSUPPORTED_SCRAM},
              {0x200, "plugins"
 #if !WITH_PLUGINS
               ,
@@ -398,6 +410,19 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
              {0x800, "sasl_oauthbearer", _UNSUPPORTED_SSL},
              {0x1000, "http", _UNSUPPORTED_HTTP},
              {0x2000, "oidc", _UNSUPPORTED_OIDC},
+             {0x10000, "auth_crypto_openssl"
+#if !WITH_CRYPTO_OPENSSL
+              ,
+              .unsupported = "OpenSSL crypto backend not available at build "
+                             "time"
+#endif
+             },
+             {0x40000, "auth_crypto"
+#if !WITH_CRYPTO
+              ,
+              .unsupported = "Crypto backend not available at build time"
+#endif
+             },
              {0, NULL}}},
     {_RK_GLOBAL, "client.id", _RK_C_STR, _RK(client_id_str),
      "Client identifier.", .sdef = "rdkafka"},
