@@ -40,6 +40,7 @@ set(
     rdkafka_timer.c
     rdkafka_topic.c
     rdkafka_transport.c
+    rdkafka_crypto.c
     rdkafka_interceptor.c
     rdkafka_header.c
     rdkafka_admin.c
@@ -86,6 +87,9 @@ set(
 
 if(WITH_SSL)
   list(APPEND sources rdkafka_ssl.c)
+endif()
+if(WITH_CRYPTO_OPENSSL)
+  list(APPEND sources rdkafka_crypto_openssl.c)
 endif()
 
 if(WITH_CURL)
@@ -146,6 +150,11 @@ if(WITHOUT_WIN32_CONFIG)
   else()
     list(APPEND rdkafka_compile_definitions WITH_SSL=0)
   endif(WITH_SSL)
+  if(WITH_CRYPTO_OPENSSL)
+    list(APPEND rdkafka_compile_definitions WITH_CRYPTO=1 WITH_CRYPTO_OPENSSL=1)
+  else()
+    list(APPEND rdkafka_compile_definitions WITH_CRYPTO=0 WITH_CRYPTO_OPENSSL=0)
+  endif(WITH_CRYPTO_OPENSSL)
   if(WITH_ZLIB)
     list(APPEND rdkafka_compile_definitions WITH_ZLIB=1)
   else()

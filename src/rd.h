@@ -71,6 +71,14 @@
 #include "../config.h" /* mklove output */
 #endif
 
+/* Build configurations without a crypto backend choice follow OpenSSL. */
+#ifndef WITH_CRYPTO_OPENSSL
+#define WITH_CRYPTO_OPENSSL WITH_SSL
+#endif
+#ifndef WITH_CRYPTO
+#define WITH_CRYPTO WITH_CRYPTO_OPENSSL
+#endif
+
 #ifdef _WIN32
 /* Win32/Visual Studio */
 #include "rdwin32.h"
