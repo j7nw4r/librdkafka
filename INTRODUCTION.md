@@ -56,6 +56,7 @@ librdkafka also provides a native C++ interface.
     - [Threads and callbacks](#threads-and-callbacks)
     - [Brokers](#brokers)
       - [SSL](#ssl)
+        - [TLS and crypto backends](#tls-and-crypto-backends)
       - [OAUTHBEARER with support for OIDC](#oauthbearer-with-support-for-oidc)
         - [JWT bearer grant type (KIP-1139)](#jwt-bearer-grant-type-kip-1139)
         - [Metadata based authentication](#metadata-based-authentication)
@@ -1193,6 +1194,77 @@ The predefined system store names are:
 
 For example, to read both intermediate and root CAs, set
 `ssl.ca.certificate.stores=CA,Root`.
+
+
+<a name="tls-and-crypto-backends"></a>
+##### TLS and crypto backends
+
+librdkafka uses two separate security services. Broker TLS encrypts the
+broker connections. Authentication crypto supplies the hashes, HMAC, PBKDF2,
+random bytes and JWT signatures for SASL SCRAM, OAUTHBEARER/OIDC and SCRAM
+credential upserts. The build selects one backend for each service. There is
+no runtime switch and no public provider API.
+
+| Service | Backends | CMake option | configure option |
+|---|---|---|---|
+| Broker TLS | `openssl` (default), `schannel`, `none` | `RDKAFKA_TLS_BACKEND` | `--with-tls-backend` |
+| Authentication crypto | `openssl` (default), `bcrypt`, `none` | `RDKAFKA_CRYPTO_BACKEND` | `--with-crypto-backend` |
+
+Without these options the build keeps the `WITH_SSL`, `--enable-ssl` and
+`--disable-ssl` behavior, and the crypto backend follows the TLS backend.
+CMake stops with an error if `-DWITH_SSL=ON` is set together with
+`RDKAFKA_TLS_BACKEND=schannel` or `none`.
+
+The `schannel` and `bcrypt` backends are for Windows. They use Schannel/SSPI,
+Crypt32, BCrypt and NCrypt, so the library does not link OpenSSL and uses the
+Windows CNG modules. A backend choice alone does not make a deployment FIPS
+compliant.
+
+`builtin.features` tells the application what the build contains. `ssl` means
+broker TLS from any backend, and `tls_openssl` or `tls_schannel` names the
+backend. `auth_crypto` means authentication crypto, and `auth_crypto_openssl`
+or `auth_crypto_bcrypt` names the backend.
+
+Schannel builds have these limits:
+
+* TLS 1.2 only. The Windows cipher suite policy applies.
+* The client always verifies the broker certificate and hostname.
+  `enable.ssl.certificate.verification=false` and
+  `ssl.endpoint.identification.algorithm=none` are refused.
+* The OpenSSL-only properties fail at `rd_kafka_conf_set()`:
+  `ssl.cipher.suites`, `ssl.curves.list`, `ssl.sigalgs.list`,
+  `ssl.key.password`, `ssl.crl.location`, `ssl.providers`,
+  `ssl.engine.location`, `ssl.engine.id` and the OpenSSL callbacks.
+* `ssl.ca.location` must be a PEM file. Directories and `probe` are refused.
+  If no CA is set, the client uses the Windows Root store.
+  `ssl.ca.certificate.stores` accepts only `Root`.
+* A client key in `ssl.key.location` or `ssl.key.pem` must be unencrypted
+  PKCS#8. Windows can refuse a key that the client imports in memory. In that
+  case, use `ssl.certificate.store`.
+
+`ssl.certificate.store` selects a client certificate that is already in the
+Windows My store, for example `CurrentUser/My/<thumbprint>` or
+`LocalMachine/My/<thumbprint>`. The thumbprint is the 40-digit hexadecimal
+SHA-1 identifier. The value can also use `\`, any case, spaces, and the
+`Cert:\` prefix that PowerShell shows. The client opens the store read-only
+and does not copy or keep the key. To import a certificate and read its
+thumbprint:
+
+```powershell
+$password = Read-Host -AsSecureString 'PFX password'
+$cert = Import-PfxCertificate -FilePath client.pfx `
+  -CertStoreLocation Cert:\CurrentUser\My -Password $password
+$cert.Thumbprint
+```
+
+A service account that reads a `LocalMachine` certificate needs Read access to
+its private key (in `certlm.msc`: All Tasks > Manage Private Keys).
+
+The OIDC token requests use libcurl, which has its own TLS backend.
+`https.revocation.check=best_effort` or `none` changes the revocation check of
+libcurl with Schannel, for example for a private CA without a reachable CRL.
+With another libcurl TLS backend, `rd_kafka_new()` fails if one of these values
+is set.
 
 
 <a name="oauthbearer-with-support-for-oidc"></a>
