@@ -473,10 +473,6 @@ fail:
 #include "rdkafka_schannel.h"
 #define RD_KAFKA_SCHANNEL_CERT_LIMIT (16 * 1024 * 1024)
 
-static int rd_kafka_schannel_space(char c) {
-        return c == ' ' || c == '\t' || c == '\r' || c == '\n';
-}
-
 /* Windows message text for a status code, without the trailing period and
  * line break. */
 const char *
@@ -537,12 +533,11 @@ int rd_kafka_schannel_add_certs(HCERTSTORE store,
                 BYTE *der;
                 DWORD der_size = 0;
                 size_t block;
-                while (rd_kafka_schannel_space(*p))
-                        p++;
-                if (!*p)
+                /* Skip text outside the PEM blocks, as OpenSSL does, such
+                 * as the "Bag Attributes" that openssl pkcs12 writes. */
+                p = strstr(p, begin);
+                if (!p)
                         break;
-                if (strncmp(p, begin, strlen(begin)))
-                        goto fail;
                 finish = strstr(p + strlen(begin), end);
                 if (!finish)
                         goto fail;
@@ -621,11 +616,8 @@ int rd_kafka_schannel_import_key(const void *data,
                 char *p;
                 memcpy(text, data, size);
                 text[size] = 0;
-                p          = text;
-                while (rd_kafka_schannel_space(*p))
-                        p++;
-                if (strlen(text) != size ||
-                    strncmp(p, "-----BEGIN PRIVATE KEY-----", 27) ||
+                p          = strstr(text, "-----BEGIN PRIVATE KEY-----");
+                if (strlen(text) != size || !p ||
                     !CryptStringToBinaryA(p, (DWORD)strlen(p),
                                           CRYPT_STRING_BASE64HEADER, NULL,
                                           &input_size, NULL, NULL)) {

@@ -158,6 +158,15 @@ static void key_destroy(rd_kafka_crypto_key_t *k) {
                 NCryptFreeObject(k->provider);
         free(k);
 }
+/* Text before the PEM block is allowed, as in OpenSSL. */
+static const char *pem_find(const void *p, size_t n, const char *tag) {
+        size_t len = strlen(tag), i;
+        for (i = 0; i + len <= n; i++)
+                if (!memcmp((const char *)p + i, tag, len))
+                        return (const char *)p + i;
+        return NULL;
+}
+
 static rd_kafka_crypto_key_t *
 key_load(const void *pem, size_t n, const char *password, char *e, size_t en) {
         rd_kafka_crypto_key_t *key = NULL;
@@ -165,7 +174,8 @@ key_load(const void *pem, size_t n, const char *password, char *e, size_t en) {
         DWORD size                 = 0;
         SECURITY_STATUS status     = NTE_BAD_DATA;
         const char *stage          = "PEM decoding";
-        int is_pem                 = n >= 10 && !memcmp(pem, "-----BEGIN", 10);
+        const char *start          = pem_find(pem, n, "-----BEGIN");
+        int is_pem                 = start != NULL;
         if (n > UINT32_MAX || (password && *password)) {
                 snprintf(e, en,
                          "BCrypt requires an unencrypted PKCS#8 private key");
@@ -173,13 +183,14 @@ key_load(const void *pem, size_t n, const char *password, char *e, size_t en) {
         }
         if (is_pem) {
                 const char *tag = "-----BEGIN PRIVATE KEY-----";
-                if (n < strlen(tag) || memcmp(pem, tag, strlen(tag)) ||
-                    !CryptStringToBinaryA(pem, (DWORD)n,
+                DWORD rest = (DWORD)(n - (size_t)(start - (const char *)pem));
+                if (rest < strlen(tag) || memcmp(start, tag, strlen(tag)) ||
+                    !CryptStringToBinaryA(start, rest,
                                           CRYPT_STRING_BASE64HEADER, NULL,
                                           &size, NULL, NULL))
                         goto fail;
                 der = malloc(size);
-                if (!der || !CryptStringToBinaryA(pem, (DWORD)n,
+                if (!der || !CryptStringToBinaryA(start, rest,
                                                   CRYPT_STRING_BASE64HEADER,
                                                   der, &size, NULL, NULL))
                         goto fail;
