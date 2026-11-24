@@ -576,7 +576,8 @@ static int rd_kafka_transport_ssl_set_endpoint_id(rd_kafka_transport_t *rktrans,
 #if (OPENSSL_VERSION_NUMBER >= 0x0090806fL) && !defined(OPENSSL_NO_TLSEXT)
         /* If non-numerical hostname, send it for SNI */
         if (!is_ip_literal &&
-            !SSL_set_tlsext_host_name(rd_kafka_openssl_ssl(rktrans), name_for_verify))
+            !SSL_set_tlsext_host_name(rd_kafka_openssl_ssl(rktrans),
+                                      name_for_verify))
                 goto fail;
 #endif
 
@@ -742,7 +743,8 @@ static int rd_kafka_transport_ssl_verify(rd_kafka_transport_t *rktrans) {
                 return -1;
         }
 
-        if ((rl = SSL_get_verify_result(rd_kafka_openssl_ssl(rktrans))) != X509_V_OK) {
+        if ((rl = SSL_get_verify_result(rd_kafka_openssl_ssl(rktrans))) !=
+            X509_V_OK) {
                 rd_kafka_broker_fail(rktrans->rktrans_rkb, LOG_ERR,
                                      RD_KAFKA_RESP_ERR__SSL,
                                      "Failed to verify broker certificate: %s",
@@ -2307,8 +2309,10 @@ static rd_bool_t rd_kafka_openssl_send_pending(rd_kafka_transport_t *transport,
 static int rd_kafka_openssl_interests(rd_kafka_transport_t *t) {
         return 0;
 }
-static int rd_kafka_openssl_serve(rd_kafka_transport_t *t, int events,
-                                 char *errstr, size_t errstr_size) {
+static int rd_kafka_openssl_serve(rd_kafka_transport_t *t,
+                                  int events,
+                                  char *errstr,
+                                  size_t errstr_size) {
         return 0;
 }
 static void rd_kafka_openssl_thread_term(void) {
@@ -2322,11 +2326,249 @@ static void rd_kafka_openssl_thread_term(void) {
 #endif
 }
 const rd_kafka_tls_ops_t rd_kafka_openssl_ops = {
-    "openssl", rd_kafka_ssl_init, rd_kafka_ssl_term,
-    rd_kafka_ssl_ctx_init, rd_kafka_ssl_ctx_term,
-    rd_kafka_transport_ssl_close, rd_kafka_transport_ssl_connect,
-    rd_kafka_transport_ssl_handshake, rd_kafka_transport_ssl_send,
-    rd_kafka_transport_ssl_recv, rd_kafka_openssl_pending,
-    rd_kafka_openssl_interests, rd_kafka_openssl_serve,
+    "openssl",
+    rd_kafka_ssl_init,
+    rd_kafka_ssl_term,
+    rd_kafka_ssl_ctx_init,
+    rd_kafka_ssl_ctx_term,
+    rd_kafka_transport_ssl_close,
+    rd_kafka_transport_ssl_connect,
+    rd_kafka_transport_ssl_handshake,
+    rd_kafka_transport_ssl_send,
+    rd_kafka_transport_ssl_recv,
+    rd_kafka_openssl_pending,
+    rd_kafka_openssl_interests,
+    rd_kafka_openssl_serve,
     rd_kafka_openssl_send_pending,
     rd_kafka_openssl_thread_term};
+
+
+#ifndef _WIN32
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+
+/**
+ * @name Pending-write unit test
+ *
+ * A real nonblocking OpenSSL client and server over a socketpair with a small
+ * send buffer. OpenSSL accepts part of a request while the slice offset stays
+ * at zero. The broker must still see the request as started, a retry must
+ * pass the same slice, and close must discard the unsent ciphertext.
+ */
+
+#define UT_TLS_CHECK(expr)                                                     \
+        do {                                                                   \
+                if (!(expr)) {                                                 \
+                        RD_UT_WARN("%s:%d: check failed: %s", __FUNCTION__,    \
+                                   __LINE__, #expr);                           \
+                        goto done;                                             \
+                }                                                              \
+        } while (0)
+
+typedef struct ut_tls_fixture_s {
+        SSL_CTX *client_ctx, *server_ctx;
+        SSL *peer;
+        rd_kafka_transport_t transport;
+        int fd[2];
+} ut_tls_fixture_t;
+
+static rd_bool_t ut_tls_retryable(SSL *ssl, int result) {
+        int error = SSL_get_error(ssl, result);
+        return error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE;
+}
+
+static void ut_tls_fixture_destroy(ut_tls_fixture_t *f) {
+        if (f->transport.rktrans_tls)
+                rd_kafka_openssl_ops.close(&f->transport);
+        SSL_free(f->peer);
+        SSL_CTX_free(f->client_ctx);
+        SSL_CTX_free(f->server_ctx);
+        if (f->fd[0] >= 0)
+                close(f->fd[0]);
+        if (f->fd[1] >= 0)
+                close(f->fd[1]);
+}
+
+static rd_bool_t ut_tls_fixture_init(ut_tls_fixture_t *f) {
+        EVP_PKEY_CTX *keyctx = NULL;
+        EVP_PKEY *key        = NULL;
+        X509 *cert           = NULL;
+        X509_NAME *name;
+        rd_kafka_openssl_session_t *session;
+        int sndbuf   = 1024, i;
+        rd_bool_t ok = rd_false;
+
+        memset(f, 0, sizeof(*f));
+        f->fd[0] = f->fd[1] = -1;
+
+        keyctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL);
+        cert   = X509_new();
+        UT_TLS_CHECK(keyctx && cert && EVP_PKEY_keygen_init(keyctx) == 1 &&
+                     EVP_PKEY_CTX_set_rsa_keygen_bits(keyctx, 2048) == 1 &&
+                     EVP_PKEY_keygen(keyctx, &key) == 1);
+        UT_TLS_CHECK(X509_set_version(cert, 2) == 1 &&
+                     ASN1_INTEGER_set(X509_get_serialNumber(cert), 1) == 1 &&
+                     X509_gmtime_adj(X509_get_notBefore(cert), -60) &&
+                     X509_gmtime_adj(X509_get_notAfter(cert), 3600) &&
+                     X509_set_pubkey(cert, key) == 1);
+        name = X509_get_subject_name(cert);
+        UT_TLS_CHECK(X509_NAME_add_entry_by_txt(
+                         name, "CN", MBSTRING_ASC,
+                         (const unsigned char *)"localhost", -1, -1, 0) == 1 &&
+                     X509_set_issuer_name(cert, name) == 1 &&
+                     X509_sign(cert, key, EVP_sha256()) > 0);
+
+        f->client_ctx = SSL_CTX_new(SSLv23_method());
+        f->server_ctx = SSL_CTX_new(SSLv23_method());
+        UT_TLS_CHECK(f->client_ctx && f->server_ctx);
+#ifdef SSL_OP_NO_TLSv1_3
+        /* Keep session tickets out of the small socket buffer. */
+        SSL_CTX_set_options(f->client_ctx, SSL_OP_NO_TLSv1_3);
+        SSL_CTX_set_options(f->server_ctx, SSL_OP_NO_TLSv1_3);
+#endif
+        SSL_CTX_set_mode(f->client_ctx, SSL_MODE_ENABLE_PARTIAL_WRITE);
+        UT_TLS_CHECK(SSL_CTX_use_certificate(f->server_ctx, cert) == 1 &&
+                     SSL_CTX_use_PrivateKey(f->server_ctx, key) == 1);
+        UT_TLS_CHECK(!socketpair(AF_UNIX, SOCK_STREAM, 0, f->fd));
+        UT_TLS_CHECK(!setsockopt(f->fd[0], SOL_SOCKET, SO_SNDBUF, &sndbuf,
+                                 sizeof(sndbuf)));
+#ifdef SO_NOSIGPIPE
+        for (i = 0; i < 2; i++) {
+                int on = 1;
+                setsockopt(f->fd[i], SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on));
+        }
+#endif
+        for (i = 0; i < 2; i++) {
+                int flags = fcntl(f->fd[i], F_GETFL, 0);
+                UT_TLS_CHECK(flags >= 0 &&
+                             !fcntl(f->fd[i], F_SETFL, flags | O_NONBLOCK));
+        }
+
+        session                  = rd_calloc(1, sizeof(*session));
+        f->transport.rktrans_tls = session;
+        f->transport.rktrans_s   = f->fd[0];
+        session->ssl             = SSL_new(f->client_ctx);
+        f->peer                  = SSL_new(f->server_ctx);
+        UT_TLS_CHECK(session->ssl && f->peer &&
+                     SSL_set_fd(session->ssl, f->fd[0]) == 1 &&
+                     SSL_set_fd(f->peer, f->fd[1]) == 1);
+        SSL_set_connect_state(session->ssl);
+        SSL_set_accept_state(f->peer);
+
+        for (i = 0; i < 10000 && !ok; i++) {
+                int a = SSL_do_handshake(session->ssl);
+                int b;
+                UT_TLS_CHECK(a == 1 || ut_tls_retryable(session->ssl, a));
+                b = SSL_do_handshake(f->peer);
+                UT_TLS_CHECK(b == 1 || ut_tls_retryable(f->peer, b));
+                ok = a == 1 && b == 1;
+        }
+done:
+        X509_free(cert);
+        EVP_PKEY_free(key);
+        EVP_PKEY_CTX_free(keyctx);
+        return ok;
+}
+
+static int ut_ssl_pending_write(rd_bool_t cancel) {
+        const size_t size = 131071;
+        ut_tls_fixture_t f;
+        rd_buf_t buffer, other;
+        rd_slice_t slice, wrong;
+        unsigned char *payload, *received, extra;
+        char errstr[512];
+        size_t i, total = 0;
+        int fails = 1;
+
+        payload  = rd_malloc(size);
+        received = rd_malloc(size);
+        for (i = 0; i < size; i++)
+                payload[i] = (unsigned char)(i * 31 + i / 97);
+        rd_buf_init(&buffer, 1, size);
+        rd_buf_init(&other, 1, size);
+        rd_buf_write(&buffer, payload, size);
+        rd_buf_write(&other, payload, size);
+        rd_slice_init_full(&slice, &buffer);
+
+        if (!ut_tls_fixture_init(&f)) {
+                RD_UT_WARN("TLS fixture setup failed");
+                goto done;
+        }
+
+        /* The socket buffer is full: OpenSSL keeps the record pending. */
+        UT_TLS_CHECK(rd_kafka_openssl_ops.send(&f.transport, &slice, errstr,
+                                               sizeof(errstr)) == 0);
+        UT_TLS_CHECK(rd_slice_offset(&slice) == 0);
+        UT_TLS_CHECK(rd_kafka_openssl_ops.send_pending(&f.transport, &slice));
+        UT_TLS_CHECK(
+            rd_kafka_transport_request_has_started(&f.transport, &slice));
+        UT_TLS_CHECK(rd_kafka_openssl_ops.send(&f.transport, &slice, errstr,
+                                               sizeof(errstr)) == 0);
+
+        /* A retry with any other slice must fail. */
+        wrong = slice;
+        UT_TLS_CHECK(rd_slice_read(&wrong, NULL, 1) == 1);
+        UT_TLS_CHECK(!rd_kafka_openssl_ops.send_pending(&f.transport, &wrong));
+        UT_TLS_CHECK(rd_kafka_openssl_ops.send(&f.transport, &wrong, errstr,
+                                               sizeof(errstr)) == -1);
+        rd_slice_init_full(&wrong, &other);
+        UT_TLS_CHECK(!rd_kafka_openssl_ops.send_pending(&f.transport, &wrong));
+        UT_TLS_CHECK(rd_kafka_openssl_ops.send(&f.transport, &wrong, errstr,
+                                               sizeof(errstr)) == -1);
+
+        if (cancel) {
+                unsigned char raw[16384];
+                ssize_t n;
+                size_t emitted = 0;
+                int available  = -1;
+                while ((n = recv(f.fd[1], raw, sizeof(raw), 0)) > 0)
+                        emitted += (size_t)n;
+                UT_TLS_CHECK(n == -1 &&
+                             (errno == EAGAIN || errno == EWOULDBLOCK));
+                UT_TLS_CHECK(emitted > 0 && emitted < size);
+                rd_kafka_openssl_ops.close(&f.transport);
+                UT_TLS_CHECK(f.transport.rktrans_tls == NULL);
+                /* No close-notify and no write after cancellation. */
+                UT_TLS_CHECK(!ioctl(f.fd[1], FIONREAD, &available));
+                UT_TLS_CHECK(available == 0);
+        } else {
+                int n;
+                for (i = 0;
+                     i < 100000 && (rd_slice_remains(&slice) || total < size);
+                     i++) {
+                        if (rd_slice_remains(&slice))
+                                UT_TLS_CHECK(rd_kafka_openssl_ops.send(
+                                                 &f.transport, &slice, errstr,
+                                                 sizeof(errstr)) >= 0);
+                        n = SSL_read(f.peer, received + total,
+                                     (int)(size - total));
+                        if (n > 0)
+                                total += (size_t)n;
+                        else
+                                UT_TLS_CHECK(ut_tls_retryable(f.peer, n));
+                }
+                UT_TLS_CHECK(total == size && !rd_slice_remains(&slice));
+                UT_TLS_CHECK(!memcmp(payload, received, size));
+                UT_TLS_CHECK(
+                    !rd_kafka_openssl_ops.send_pending(&f.transport, &slice));
+                /* The request was sent exactly once. */
+                n = SSL_read(f.peer, &extra, 1);
+                UT_TLS_CHECK(n <= 0 &&
+                             SSL_get_error(f.peer, n) == SSL_ERROR_WANT_READ);
+        }
+        fails = 0;
+done:
+        ut_tls_fixture_destroy(&f);
+        rd_buf_destroy(&buffer);
+        rd_buf_destroy(&other);
+        rd_free(payload);
+        rd_free(received);
+        return fails;
+}
+
+int unittest_ssl_transport(void) {
+        if (ut_ssl_pending_write(rd_false) || ut_ssl_pending_write(rd_true))
+                RD_UT_FAIL("OpenSSL pending-write checks failed");
+        RD_UT_PASS();
+}
+#endif

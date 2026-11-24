@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Native Schannel tests against a real TLS echo server, not Kafka emulation."""
+"""Native Schannel tests against a real TLS echo server (no Kafka)."""
 import argparse
 import contextlib
 import datetime as dt
@@ -22,25 +22,37 @@ from windows_certificate_store import temporary_windows_identities
 
 def certificates(root):
     now = dt.datetime.now(dt.timezone.utc)
+
     def issue(name, ca=None, expired=False, server=False):
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, name)])
         issuer, signing_key = (ca[0].subject, ca[1]) if ca else (subject, key)
-        builder = (x509.CertificateBuilder().subject_name(subject).issuer_name(issuer)
-                   .public_key(key.public_key()).serial_number(x509.random_serial_number())
-                   .not_valid_before(now - dt.timedelta(days=3))
-                   .not_valid_after(now + dt.timedelta(days=-1 if expired else 2))
-                   .add_extension(x509.BasicConstraints(ca=ca is None, path_length=None), True))
+        builder = (
+            x509.CertificateBuilder()
+            .subject_name(subject)
+            .issuer_name(issuer)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now - dt.timedelta(days=3))
+            .not_valid_after(now + dt.timedelta(days=-1 if expired else 2))
+            .add_extension(
+                x509.BasicConstraints(ca=ca is None, path_length=None), True))
         if ca:
-            builder = builder.add_extension(x509.ExtendedKeyUsage([
-                ExtendedKeyUsageOID.SERVER_AUTH if server else ExtendedKeyUsageOID.CLIENT_AUTH]), False)
+            usage = (ExtendedKeyUsageOID.SERVER_AUTH if server
+                     else ExtendedKeyUsageOID.CLIENT_AUTH)
+            builder = builder.add_extension(
+                x509.ExtendedKeyUsage([usage]), False)
             if server:
-                builder = builder.add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost")]), False)
+                builder = builder.add_extension(
+                    x509.SubjectAlternativeName(
+                        [x509.DNSName("localhost")]), False)
         cert = builder.sign(signing_key, hashes.SHA256())
-        (root / f"{name}.crt").write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+        (root / f"{name}.crt").write_bytes(
+            cert.public_bytes(serialization.Encoding.PEM))
         key_path = root / f"{name}.key"
-        key_path.write_bytes(key.private_bytes(serialization.Encoding.PEM,
-                              serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+        key_path.write_bytes(key.private_bytes(
+            serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption()))
         key_path.chmod(0o600)
         return cert, key
     ca = issue("ca")
@@ -55,9 +67,9 @@ def certificates(root):
     issue("expired-client", ca, expired=True)
 
 
-def case(binary, runner, root, name, ca="ca", client="client", hostname="localhost",
-         server="server", reject=False, cancel=False, pfx=False,
-         selector=None, memory_ca=False, ephemeral_rejection=False,
+def case(binary, runner, root, name, ca="ca", client="client",
+         hostname="localhost", server="server", reject=False, cancel=False,
+         pfx=False, selector=None, memory_ca=False, ephemeral_rejection=False,
          require_client=True):
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
@@ -67,12 +79,15 @@ def case(binary, runner, root, name, ca="ca", client="client", hostname="localho
     port = listener.getsockname()[1]
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = context.maximum_version = ssl.TLSVersion.TLSv1_2
-    context.load_cert_chain(str(root / f"{server}.crt"), str(root / f"{server}.key"))
+    context.load_cert_chain(
+        str(root / f"{server}.crt"), str(root / f"{server}.key"))
     context.load_verify_locations(cafile=str(root / "ca.crt"))
-    context.verify_mode = ssl.CERT_REQUIRED if require_client else ssl.CERT_NONE
+    context.verify_mode = (ssl.CERT_REQUIRED if require_client
+                           else ssl.CERT_NONE)
     errors = queue.Queue()
     active = []
     expected = bytes((i * 31 + i // 97) & 255 for i in range(131071))
+
     def serve():
         seen = bytearray()
         try:
@@ -100,14 +115,18 @@ def case(binary, runner, root, name, ca="ca", client="client", hostname="localho
                         break
                     seen.extend(data)
                     if cancel:
-                        raise AssertionError("canceled Schannel plaintext reached TLS peer")
+                        raise AssertionError(
+                            "canceled Schannel plaintext reached TLS peer")
                     if len(seen) > len(expected):
-                        raise AssertionError("duplicate plaintext reached TLS peer")
+                        raise AssertionError(
+                            "duplicate plaintext reached TLS peer")
                     for offset in range(0, len(data), 37):
                         tls.sendall(data[offset:offset + 37])
             if not reject and not cancel and bytes(seen) != expected:
-                raise AssertionError(f"TLS peer received {len(seen)} unexpected bytes")
-        except (ssl.SSLError, ConnectionResetError, BrokenPipeError, OSError) as exc:
+                raise AssertionError(
+                    f"TLS peer received {len(seen)} unexpected bytes")
+        except (ssl.SSLError, ConnectionResetError, BrokenPipeError,
+                OSError) as exc:
             if not stop.is_set() and not reject and not (cancel and not seen):
                 errors.put(exc)
         except BaseException as exc:
@@ -115,20 +134,43 @@ def case(binary, runner, root, name, ca="ca", client="client", hostname="localho
     worker = threading.Thread(target=serve, daemon=True)
     worker.start()
     try:
-        args = runner + [str(binary), str(root / f"{ca}.crt"),
-                         ("store:" + selector) if selector else ("@" + str(root / "client.pfx") if pfx else (str(root / f"{client}.crt") if client else "-")),
-                         "fixture-pass" if pfx else (str(root / f"{client}.key") if client else "-"),
-                         hostname, str(port), "reject-ephemeral" if ephemeral_rejection else ("reject" if reject else "accept"),
-                         "cancel" if cancel else ("memory" if memory_ca else "echo")]
-        result = subprocess.run(args, text=True, capture_output=True, timeout=45)
+        if selector:
+            identity = "store:" + selector
+        elif pfx:
+            identity = "@" + str(root / "client.pfx")
+        elif client:
+            identity = str(root / f"{client}.crt")
+        else:
+            identity = "-"
+        if pfx:
+            secret = "fixture-pass"
+        elif client:
+            secret = str(root / f"{client}.key")
+        else:
+            secret = "-"
+        if ephemeral_rejection:
+            outcome = "reject-ephemeral"
+        else:
+            outcome = "reject" if reject else "accept"
+        if cancel:
+            mode = "cancel"
+        else:
+            mode = "memory" if memory_ca else "echo"
+        args = runner + [str(binary), str(root / f"{ca}.crt"), identity,
+                         secret, hostname, str(port), outcome, mode]
+        result = subprocess.run(args, text=True, capture_output=True,
+                                timeout=45)
         if result.returncode:
-            raise AssertionError(f"{name}: exit {result.returncode}\n{result.stdout}{result.stderr}")
+            raise AssertionError(
+                f"{name}: exit {result.returncode}\n"
+                f"{result.stdout}{result.stderr}")
         if reject:
             stop.set()
             listener.close()
         worker.join(5)
         if worker.is_alive():
-            raise AssertionError(f"{name}: TLS peer shutdown deadline exceeded")
+            raise AssertionError(
+                f"{name}: TLS peer shutdown deadline exceeded")
         if not errors.empty():
             raise errors.get()
         print(f"PASS {name}: {result.stdout.strip()}", flush=True)
@@ -144,7 +186,10 @@ def case(binary, runner, root, name, ca="ca", client="client", hostname="localho
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--client", type=Path, required=True)
-    parser.add_argument("--runner", default="", help="Compatibility runner, e.g. wine; empty means native")
+    parser.add_argument(
+        "--runner",
+        default="",
+        help="Compatibility runner, e.g. wine; empty means native")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="rdkafka-schannel-") as temp:
         root = Path(temp)
@@ -153,40 +198,66 @@ def main():
         runner = shlex.split(args.runner)
         binary = args.client.resolve()
         failures = []
+
         def run(name, **kwargs):
             try:
                 case(binary, runner, root, name, **kwargs)
             except Exception as exc:
                 failures.append(name)
                 print(f"FAIL {name}: {exc}", flush=True)
-        run("verified server TLS exact/partial IO", client=None, require_client=False)
+        run("verified server TLS exact/partial IO",
+            client=None, require_client=False)
         if os.name == "nt" and not runner:
             with temporary_windows_identities(root) as selectors:
-                run("read-only My identity verified mTLS", selector=selectors["client"])
+                run("read-only My identity verified mTLS",
+                    selector=selectors["client"])
                 # PowerShell path form, other case, spaced thumbprint. The
                 # U+200E case is a unit test: argv uses the ANSI code page.
                 location, store, thumbprint = selectors["client"].split("/")
-                spaced = " ".join(thumbprint[i:i + 2] for i in range(0, len(thumbprint), 2))
+                spaced = " ".join(thumbprint[i:i + 2]
+                                  for i in range(0, len(thumbprint), 2))
                 run("ssl.certificate.store PowerShell selector form",
-                    selector="Cert:\\" + "\\".join((location.lower(), store.upper(), spaced.lower())))
-                run("memory CA duplicate/clear verified mTLS", selector=selectors["client"], memory_ca=True)
-                run("cancellation discards pending prefix", selector=selectors["client"], cancel=True)
-                run("wrong hostname", selector=selectors["client"], hostname="127.0.0.1", reject=True)
-                run("unknown CA", selector=selectors["client"], ca="wrong-ca", reject=True)
-                run("expired server", selector=selectors["client"], server="expired-server", reject=True)
+                    selector="Cert:\\" + "\\".join(
+                        (location.lower(), store.upper(), spaced.lower())))
+                run("memory CA duplicate/clear verified mTLS",
+                    selector=selectors["client"], memory_ca=True)
+                run("cancellation discards pending prefix",
+                    selector=selectors["client"], cancel=True)
+                run("wrong hostname",
+                    selector=selectors["client"],
+                    hostname="127.0.0.1",
+                    reject=True)
+                run("unknown CA",
+                    selector=selectors["client"],
+                    ca="wrong-ca",
+                    reject=True)
+                run("expired server",
+                    selector=selectors["client"],
+                    server="expired-server",
+                    reject=True)
                 run("missing client", client=None, reject=True)
-                run("invalid client", selector=selectors["invalid-client"], reject=True)
-                run("expired client", selector=selectors["expired-client"], reject=True)
+                run("invalid client",
+                    selector=selectors["invalid-client"],
+                    reject=True)
+                run("expired client",
+                    selector=selectors["expired-client"],
+                    reject=True)
         else:
             # Compatibility execution never silently provisions native keys.
             run("compatibility file mTLS", client="client")
         # Ephemeral imports must fail explicitly on the affected Windows API;
         # no fallback is allowed to write a private key to disk.
-        run("ephemeral PEM limitation diagnostic", reject=True, ephemeral_rejection=True)
-        run("ephemeral PFX limitation diagnostic", pfx=True, reject=True, ephemeral_rejection=True)
+        run("ephemeral PEM limitation diagnostic",
+            reject=True, ephemeral_rejection=True)
+        run("ephemeral PFX limitation diagnostic",
+            pfx=True, reject=True, ephemeral_rejection=True)
         if failures:
-            raise SystemExit(f"Schannel transport failed {len(failures)} case(s): " + ", ".join(failures))
-    print("PASS all Schannel transport cases; no Kafka protocol was emulated", flush=True)
+            raise SystemExit(
+                f"Schannel transport failed {len(failures)} case(s): " +
+                ", ".join(failures))
+    print(
+        "PASS all Schannel transport cases; no Kafka protocol was emulated",
+        flush=True)
 
 
 if __name__ == "__main__":

@@ -214,3 +214,67 @@ invalid:
         out->size = 0;
         return -1;
 }
+
+
+#include "rdunittest.h"
+
+int unittest_base64(void) {
+        static const char *plain[]   = {"",     "f",     "fo",    "foo",
+                                        "foob", "fooba", "foobar"};
+        static const char *encoded[] = {
+            "", "Zg==", "Zm8=", "Zm9v", "Zm9vYg==", "Zm9vYmE=", "Zm9vYmFy"};
+        static const char *bad[] = {
+            "A",    "AA=",  "A===",  "====",       "AA=A", "Zg=A",
+            "Zh==", "Zm9=", "Zm9v=", "Zm9v\nAAAA", "Zg--"};
+        static const unsigned char urlsafe[] = {251, 255};
+        rd_chariov_t in, out, decoded;
+        char *str;
+        size_t i;
+
+        /* RFC 4648 section 10 vectors */
+        for (i = 0; i < RD_ARRAYSIZE(plain); i++) {
+                in.ptr  = (char *)plain[i];
+                in.size = strlen(plain[i]);
+                rd_base64_encode(&in, &out);
+                RD_UT_ASSERT(out.ptr && !strcmp(out.ptr, encoded[i]),
+                             "encode \"%s\"", plain[i]);
+                RD_UT_ASSERT(!rd_base64_decode(&out, &decoded), "decode \"%s\"",
+                             encoded[i]);
+                RD_UT_ASSERT(decoded.size == in.size &&
+                                 !memcmp(decoded.ptr, in.ptr, in.size),
+                             "round trip \"%s\"", plain[i]);
+                rd_free(out.ptr);
+                rd_free(decoded.ptr);
+        }
+
+        for (i = 0; i < RD_ARRAYSIZE(bad); i++) {
+                in.ptr  = (char *)bad[i];
+                in.size = strlen(bad[i]);
+                RD_UT_ASSERT(rd_base64_decode(&in, &out) == -1 && !out.ptr,
+                             "malformed input %" PRIusz " must fail", i);
+        }
+
+        in.ptr  = " \tZg==\r\n";
+        in.size = 8;
+        RD_UT_ASSERT(!rd_base64_decode(&in, &out) && out.size == 1 &&
+                         out.ptr[0] == 'f',
+                     "surrounding white space must be ignored");
+        rd_free(out.ptr);
+
+        in.ptr  = (char *)urlsafe;
+        in.size = sizeof(urlsafe);
+        str     = rd_base64_encode_str_urlsafe(&in);
+        RD_UT_ASSERT(str && !strcmp(str, "-_8"), "URL-safe encoding");
+        rd_free(str);
+
+        /* The length check must stop before the input is read. */
+        in.ptr  = "x";
+        in.size = (size_t)(INT_MAX / 4) * 3 + 1;
+        rd_base64_encode(&in, &out);
+        RD_UT_ASSERT(!out.ptr && !out.size, "oversized input must fail");
+        RD_UT_ASSERT(!rd_base64_encode_str(&in), "oversized input must fail");
+        RD_UT_ASSERT(!rd_base64_encode_str_urlsafe(&in),
+                     "oversized input must fail");
+
+        RD_UT_PASS();
+}
