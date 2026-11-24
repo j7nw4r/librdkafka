@@ -501,7 +501,14 @@ rd_kafka_schannel_ctx_init(rd_kafka_t *rk, char *errstr, size_t errstr_size) {
                 if (conf->ssl.cert) {
                         if (rd_kafka_schannel_copy_store(
                                 cfg->identity_store, conf->ssl.cert->win_store,
-                                &cfg->identity) <= 0)
+                                NULL) <= 0)
+                                goto win_error;
+                        /* A memory store does not keep the PEM order, so
+                         * find the leaf, which the setter parsed first. */
+                        cfg->identity = CertFindCertificateInStore(
+                            cfg->identity_store, X509_ASN_ENCODING, 0,
+                            CERT_FIND_EXISTING, conf->ssl.cert->win_cert, NULL);
+                        if (!cfg->identity)
                                 goto win_error;
                 } else if (conf->ssl.cert_location || conf->ssl.cert_pem) {
                         if (rd_kafka_schannel_read_certs(
