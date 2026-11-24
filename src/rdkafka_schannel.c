@@ -405,8 +405,8 @@ rd_kafka_schannel_ctx_init(rd_kafka_t *rk, char *errstr, size_t errstr_size) {
                         goto fail;
         } else if (conf->ssl.keystore_location) {
                 size_t file_size;
-                char *file = rd_file_read(conf->ssl.keystore_location,
-                                          &file_size, RD_SCHANNEL_FILE_LIMIT);
+                char *file      = rd_file_read(conf->ssl.keystore_location,
+                                               &file_size, RD_SCHANNEL_FILE_LIMIT);
                 WCHAR *password = NULL;
                 CRYPT_DATA_BLOB blob;
                 PCCERT_CONTEXT cert = NULL;

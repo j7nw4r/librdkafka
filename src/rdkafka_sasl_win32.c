@@ -115,7 +115,7 @@ static CredHandle *rd_kafka_sasl_sspi_cred_new(rd_kafka_transport_t *rktrans,
                                                size_t errstr_size) {
         TimeStamp expiry = {0, 0};
         SECURITY_STATUS sr;
-        CredHandle *cred = rd_calloc(1, sizeof(*cred));
+        CredHandle *cred       = rd_calloc(1, sizeof(*cred));
         static WCHAR package[] = L"Kerberos";
 
         sr = AcquireCredentialsHandleW(NULL, package, SECPKG_CRED_OUTBOUND,

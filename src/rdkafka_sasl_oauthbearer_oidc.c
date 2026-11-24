@@ -372,13 +372,13 @@ static char *rd_kafka_oidc_assertion_create(
     const int exp,
     const rd_bool_t jti_include) {
 
-        char *encoded_header    = NULL;
-        char *encoded_payload   = NULL;
-        char *encoded_signature = NULL;
-        char *unsigned_token    = NULL;
-        char *result            = NULL;
-        char *header_str        = NULL;
-        char *payload_str       = NULL;
+        char *encoded_header        = NULL;
+        char *encoded_payload       = NULL;
+        char *encoded_signature     = NULL;
+        char *unsigned_token        = NULL;
+        char *result                = NULL;
+        char *header_str            = NULL;
+        char *payload_str           = NULL;
         rd_kafka_crypto_key_t *pkey = NULL;
         char *key_file              = NULL;
         size_t key_len              = 0;

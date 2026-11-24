@@ -443,8 +443,7 @@ rd_bool_t rd_kafka_transport_request_has_started(rd_kafka_transport_t *rktrans,
         if (rd_slice_offset(slice) > 0)
                 return rd_true;
 #if WITH_TLS
-        if (rktrans && rktrans->rktrans_tls &&
-            rd_kafka_tls_ops->send_pending)
+        if (rktrans && rktrans->rktrans_tls && rd_kafka_tls_ops->send_pending)
                 return rd_kafka_tls_ops->send_pending(rktrans, slice);
 #endif
         return rd_false;
@@ -631,7 +630,7 @@ static void rd_kafka_transport_connected(rd_kafka_transport_t *rktrans) {
                  * This is also an asynchronous operation so dont
                  * propagate to broker_connect_done() just yet. */
                 if (rd_kafka_tls_ops->connect(rkb, rktrans, errstr,
-                                             sizeof(errstr)) == -1) {
+                                              sizeof(errstr)) == -1) {
                         rd_kafka_transport_connect_done(rktrans, errstr);
                         return;
                 }
@@ -684,10 +683,10 @@ static void rd_kafka_transport_io_event(rd_kafka_transport_t *rktrans,
 #if WITH_TLS
         if (rktrans->rktrans_tls &&
             rkb->rkb_state > RD_KAFKA_BROKER_STATE_SSL_HANDSHAKE &&
-            rd_kafka_tls_ops->serve(rktrans, events, errstr,
-                                   sizeof(errstr)) == -1) {
-                rd_kafka_broker_fail(rkb, LOG_ERR, RD_KAFKA_RESP_ERR__SSL,
-                                    "%s", errstr);
+            rd_kafka_tls_ops->serve(rktrans, events, errstr, sizeof(errstr)) ==
+                -1) {
+                rd_kafka_broker_fail(rkb, LOG_ERR, RD_KAFKA_RESP_ERR__SSL, "%s",
+                                     errstr);
                 return;
         }
 #endif
@@ -1015,7 +1014,7 @@ int rd_kafka_transport_io_serve(rd_kafka_transport_t *rktrans,
                 if (rkb->rkb_state > RD_KAFKA_BROKER_STATE_SSL_HANDSHAKE &&
                     rd_kafka_tls_ops->pending(rktrans)) {
                         buffered_events = POLLIN;
-                        timeout_ms = 0;
+                        timeout_ms      = 0;
                 }
         }
 #endif

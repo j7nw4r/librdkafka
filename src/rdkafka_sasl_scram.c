@@ -278,9 +278,9 @@ static int rd_kafka_sasl_scram_build_client_final_message(
     int itcnt,
     rd_chariov_t *out) {
         struct rd_kafka_sasl_scram_state *state = rktrans->rktrans_sasl.state;
-        rd_kafka_conf_t *conf        = &rktrans->rktrans_rkb->rkb_rk->rk_conf;
-        rd_chariov_t SaslPassword    = RD_ZERO_INIT;
-        rd_chariov_t SaltedPassword  = {
+        rd_kafka_conf_t *conf       = &rktrans->rktrans_rkb->rkb_rk->rk_conf;
+        rd_chariov_t SaslPassword   = RD_ZERO_INIT;
+        rd_chariov_t SaltedPassword = {
             .ptr = rd_alloca(RD_KAFKA_CRYPTO_MAX_DIGEST_SIZE)};
         rd_chariov_t ClientKey = {
             .ptr = rd_alloca(RD_KAFKA_CRYPTO_MAX_DIGEST_SIZE)};
@@ -298,7 +298,7 @@ static int rd_kafka_sasl_scram_build_client_final_message(
         const rd_chariov_t ServerKeyVerbatim = {.ptr  = "Server Key",
                                                 .size = 10};
         rd_chariov_t ClientProof             = {
-            .ptr = rd_alloca(RD_KAFKA_CRYPTO_MAX_DIGEST_SIZE)};
+                        .ptr = rd_alloca(RD_KAFKA_CRYPTO_MAX_DIGEST_SIZE)};
         rd_chariov_t client_final_msg_wo_proof;
         char *ClientProofB64;
         int i;
