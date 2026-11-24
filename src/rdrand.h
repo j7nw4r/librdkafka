@@ -29,19 +29,10 @@
 #ifndef _RDRAND_H_
 #define _RDRAND_H_
 
-#if WITH_SSL
-#include <openssl/crypto.h>
-#if OPENSSL_VERSION_NUMBER >= 0x10101000L
-#define HAVE_OSSL_SECURE_RAND_BYTES 1
-#define HAVE_SECURE_RAND_BYTES      1
-#endif
-#endif
-#ifndef HAVE_OSSL_SECURE_RAND_BYTES
-#if HAVE_GETENTROPY || defined(_WIN32)
+#if WITH_CRYPTO || HAVE_GETENTROPY || defined(_WIN32)
 #define HAVE_SECURE_RAND_BYTES 1
 #else
 #define HAVE_SECURE_RAND_BYTES 0
-#endif
 #endif
 
 /**

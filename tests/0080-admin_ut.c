@@ -2298,8 +2298,8 @@ static void do_test_AlterUserScramCredentials(const char *what,
 
         rkqu = useq ? useq : rd_kafka_queue_new(rk);
 
-#if !WITH_SSL
-        /* Whenever librdkafka wasn't built with OpenSSL,
+#if !WITH_CRYPTO
+        /* Whenever librdkafka was built without a crypto backend,
          * the request should fail with error code
          * RD_KAFKA_RESP_ERR__INVALID_ARG */
         rd_kafka_UserScramCredentialAlteration_t *alterations_ssl[1];
