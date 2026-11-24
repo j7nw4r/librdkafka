@@ -441,6 +441,7 @@ extern int unittest_assignment(void);
 #if WITH_SSL
 extern int unittest_ssl(void);
 #endif
+extern int unittest_base64(void);
 #if WITH_CRYPTO
 extern int unittest_crypto(void);
 #endif
@@ -501,6 +502,7 @@ int rd_unittest(void) {
 #if WITH_SSL
             {"ssl", unittest_ssl},
 #endif
+            {"base64", unittest_base64},
 #if WITH_CRYPTO
             {"crypto", unittest_crypto},
 #endif
