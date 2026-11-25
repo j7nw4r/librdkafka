@@ -15,6 +15,11 @@
   (#5693).
 * New `builtin.features` flag `tls_openssl` (#5693).
 * SASL OAUTHBEARER no longer needs OpenSSL at build time (#5693).
+* New Windows crypto backend `bcrypt`, which uses BCrypt and NCrypt. CMake
+  `RDKAFKA_CRYPTO_BACKEND=bcrypt` and configure `--with-crypto-backend=bcrypt`
+  select it. With the TLS backend `none`, the library does not link OpenSSL
+  (#5693).
+* New `builtin.features` flag `auth_crypto_bcrypt` (#5693).
 
 
 ## Fixes
@@ -32,6 +37,12 @@
 * OAUTHBEARER/OIDC: the token payload decoder did not terminate the decoded
   payload when its base64 length was a multiple of 4, and the JSON parser
   read past the buffer (#5693).
+* Base64: all builds now use the library's own decoder. It rejects input
+  that the OpenSSL decoder accepted: non-zero padding bits, misplaced
+  padding and white space inside the input. This applies to the SASL SCRAM
+  salt and the OIDC token payload (#5693).
+* Windows: CMake builds with `WITH_CURL=ON` did not enable HTTP and OIDC
+  support (#5693).
 * Fix the bundled zlib being built without optimisation, which slowed down
   gzip compression in self-contained builds. Happening since 1.4.0 (#5673).
 
