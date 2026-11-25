@@ -54,6 +54,10 @@ typedef struct rd_kafka_tls_ops_s {
                         rd_buf_t *rbuf,
                         char *errstr,
                         size_t errstr_size);
+        /* True if the adapter holds part of the request in \p slice while
+         * the slice offset has not moved. */
+        rd_bool_t (*send_pending)(rd_kafka_transport_t *rktrans,
+                                  const rd_slice_t *slice);
         void (*close)(rd_kafka_transport_t *rktrans);
 } rd_kafka_tls_ops_t;
 

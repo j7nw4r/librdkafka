@@ -431,6 +431,23 @@ ssize_t rd_kafka_transport_recv(rd_kafka_transport_t *rktrans,
 
 
 /**
+ * @returns true if the transport has sent or committed part of the
+ *          request in \p slice. The request can then only be removed
+ *          together with the connection.
+ */
+rd_bool_t rd_kafka_transport_request_has_started(rd_kafka_transport_t *rktrans,
+                                                 const rd_slice_t *slice) {
+        if (rd_slice_offset(slice) > 0)
+                return rd_true;
+#if WITH_TLS
+        if (rktrans && rktrans->rktrans_tls)
+                return rd_kafka_tls_ops->send_pending(rktrans, slice);
+#endif
+        return rd_false;
+}
+
+
+/**
  * @brief Notify transport layer of full request sent.
  */
 void rd_kafka_transport_request_sent(rd_kafka_broker_t *rkb,

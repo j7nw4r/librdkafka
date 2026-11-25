@@ -441,6 +441,9 @@ extern int unittest_assignment(void);
 #if WITH_SSL
 extern int unittest_ssl(void);
 #endif
+#if WITH_SSL && !defined(_WIN32)
+extern int unittest_ssl_transport(void);
+#endif
 extern int unittest_base64(void);
 #if WITH_CRYPTO
 extern int unittest_crypto(void);
@@ -501,6 +504,9 @@ int rd_unittest(void) {
             {"feature", unittest_feature},
 #if WITH_SSL
             {"ssl", unittest_ssl},
+#endif
+#if WITH_SSL && !defined(_WIN32)
+            {"ssl_transport", unittest_ssl_transport},
 #endif
             {"base64", unittest_base64},
 #if WITH_CRYPTO
