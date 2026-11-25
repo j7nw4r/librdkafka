@@ -587,8 +587,10 @@ static RD_INLINE RD_UNUSED rd_bool_t rd_file_stat(const char *path,
 #ifdef _WIN32
         struct _stat st;
         if (_stat(path, &st) == 0) {
+                /* rd_bool_t is 8 bits wide: S_IFDIR (0x4000) would truncate
+                 * to false. */
                 if (is_dir)
-                        *is_dir = st.st_mode & S_IFDIR;
+                        *is_dir = (st.st_mode & S_IFDIR) ? rd_true : rd_false;
                 return rd_true;
         }
 #else
