@@ -444,6 +444,7 @@ extern int unittest_ssl(void);
 #if WITH_SSL && !defined(_WIN32)
 extern int unittest_ssl_transport(void);
 #endif
+extern int unittest_cert_store_selector(void);
 extern int unittest_base64(void);
 #if WITH_CRYPTO
 extern int unittest_crypto(void);
@@ -502,6 +503,7 @@ int rd_unittest(void) {
             {"share_acknowledge", unittest_share_acknowledge},
             {"msgset_errors", rd_kafka_unittest_msgset_errors},
             {"feature", unittest_feature},
+            {"cert_store_selector", unittest_cert_store_selector},
 #if WITH_SSL
             {"ssl", unittest_ssl},
 #endif

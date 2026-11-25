@@ -33,6 +33,8 @@
 
 #if WITH_SSL
 const rd_kafka_tls_ops_t *const rd_kafka_tls_ops = &rd_kafka_openssl_ops;
+#elif WITH_SCHANNEL
+const rd_kafka_tls_ops_t *const rd_kafka_tls_ops = &rd_kafka_schannel_ops;
 #endif
 
 void rd_kafka_tls_init(void) {

@@ -73,8 +73,15 @@
 
 /* Build configurations without a TLS or crypto backend choice follow
  * OpenSSL. */
+#ifndef WITH_SCHANNEL
+#define WITH_SCHANNEL 0
+#endif
 #ifndef WITH_TLS
-#define WITH_TLS WITH_SSL
+#if WITH_SSL || WITH_SCHANNEL
+#define WITH_TLS 1
+#else
+#define WITH_TLS 0
+#endif
 #endif
 #ifndef WITH_CRYPTO_OPENSSL
 #define WITH_CRYPTO_OPENSSL WITH_SSL

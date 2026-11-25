@@ -267,6 +267,7 @@ struct rd_kafka_conf_s {
         rd_kafka_metadata_recovery_strategy_t metadata_recovery_strategy;
 
         struct {
+                void *tls_ctx; /**< Client context of a non-OpenSSL adapter */
 #if WITH_SSL
                 SSL_CTX *ctx;
 #endif
@@ -279,6 +280,7 @@ struct rd_kafka_conf_s {
                 char *key_password;
                 char *cert_location;
                 char *cert_pem;
+                char *cert_store;
                 rd_kafka_cert_t *cert;
                 char *ca_location;
                 char *ca_pem;

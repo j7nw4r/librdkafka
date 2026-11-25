@@ -74,6 +74,7 @@ typedef struct rd_kafka_tls_ops_s {
 } rd_kafka_tls_ops_t;
 
 extern const rd_kafka_tls_ops_t rd_kafka_openssl_ops;
+extern const rd_kafka_tls_ops_t rd_kafka_schannel_ops;
 extern const rd_kafka_tls_ops_t *const rd_kafka_tls_ops;
 
 void rd_kafka_tls_init(void);

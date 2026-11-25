@@ -46,8 +46,8 @@ mkl_toggle_option "Feature" ENABLE_C11THREADS "--enable-c11threads" "Enable dete
 
 mkl_toggle_option "Feature" ENABLE_SYSLOG "--enable-syslog" "Enable logging to syslog" "y"
 
-mkl_option "Feature" env:RDKAFKA_TLS_BACKEND "--with-tls-backend=BACKEND" "Broker TLS backend: openssl or none (default: openssl if SSL is enabled, else none)" ""
-mkl_option "Feature" env:RDKAFKA_CRYPTO_BACKEND "--with-crypto-backend=BACKEND" "Authentication crypto backend: openssl, bcrypt (Windows) or none (default: openssl if SSL is enabled, else none)" ""
+mkl_option "Feature" env:RDKAFKA_TLS_BACKEND "--with-tls-backend=BACKEND" "Broker TLS backend: openssl, schannel (Windows) or none (default: openssl if SSL is enabled, else none)" ""
+mkl_option "Feature" env:RDKAFKA_CRYPTO_BACKEND "--with-crypto-backend=BACKEND" "Authentication crypto backend: openssl, bcrypt (Windows) or none (default: bcrypt with schannel, openssl if SSL is enabled, else none)" ""
 
 
 function checks {
@@ -119,6 +119,29 @@ void foo (void) {
                 exit 1
             fi
             ;;
+        schannel)
+            if [[ $ENABLE_SSL == y ]]; then
+                mkl_err "--enable-ssl conflicts with --with-tls-backend=schannel"
+                exit 1
+            fi
+            mkl_compile_check schannel WITH_SCHANNEL fail CC \
+                "-lsecur32 -lcrypt32 -lbcrypt -lncrypt" '
+#define SECURITY_WIN32
+#include <windows.h>
+#include <security.h>
+#include <schannel.h>
+int foo(void) {
+    CredHandle c;
+    TimeStamp t;
+    return AcquireCredentialsHandleA(NULL, UNISP_NAME_A,
+                                     SECPKG_CRED_OUTBOUND, NULL, NULL,
+                                     NULL, NULL, &c, &t);
+}'
+            mkl_mkvar_append schannel LIBS \
+                "-lsecur32 -lcrypt32 -lbcrypt -lncrypt"
+            mkl_mkvar_append schannel MKL_PKGCONFIG_LIBS_PRIVATE \
+                "-lsecur32 -lcrypt32 -lbcrypt -lncrypt"
+            ;;
         none)
             if [[ $ENABLE_SSL == y ]]; then
                 mkl_err "--enable-ssl conflicts with --with-tls-backend=none"
@@ -133,7 +156,9 @@ void foo (void) {
 
     local crypto_backend="$RDKAFKA_CRYPTO_BACKEND"
     if [[ -z $crypto_backend ]]; then
-        if [[ $WITH_SSL == y ]]; then
+        if [[ $tls_backend == schannel ]]; then
+            crypto_backend=bcrypt
+        elif [[ $WITH_SSL == y ]]; then
             crypto_backend=openssl
         else
             crypto_backend=none

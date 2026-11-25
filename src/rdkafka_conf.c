@@ -133,10 +133,11 @@ struct rd_kafka_property {
 #define _RK(field)  offsetof(rd_kafka_conf_t, field)
 #define _RKT(field) offsetof(rd_kafka_topic_conf_t, field)
 
-#if WITH_SSL
+#if WITH_TLS
 #define _UNSUPPORTED_SSL .unsupported = NULL
 #else
-#define _UNSUPPORTED_SSL .unsupported = "OpenSSL not available at build time"
+#define _UNSUPPORTED_SSL                                                       \
+        .unsupported = "TLS backend not available at build time"
 #endif
 
 #if OPENSSL_VERSION_NUMBER >= 0x1000200fL && defined(WITH_SSL) &&              \
@@ -391,7 +392,8 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
      "Indicates the builtin features for this build of librdkafka. "
      "An application can either query this value or attempt to set it "
      "with its list of required features to check for library support. "
-     "`ssl` means broker TLS, and `tls_openssl` names the OpenSSL backend. "
+     "`ssl` means broker TLS, and `tls_openssl` or `tls_schannel` names "
+     "the backend. "
      "`auth_crypto` means a crypto backend for SASL SCRAM, OIDC JWT signing "
      "and SCRAM credential upserts, and `auth_crypto_openssl` or "
      "`auth_crypto_bcrypt` names the backend.",
@@ -420,6 +422,13 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
 #if !WITH_SSL
               ,
               .unsupported = "OpenSSL TLS backend not available at build time"
+#endif
+             },
+             {0x8000, "tls_schannel"
+#if !WITH_SCHANNEL
+              ,
+              .unsupported = "Schannel TLS backend not available at build "
+                             "time"
 #endif
              },
              {0x10000, "auth_crypto_openssl"
@@ -922,6 +931,21 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
     {_RK_GLOBAL, "ssl.certificate.pem", _RK_C_STR, _RK(ssl.cert_pem),
      "Client's public key string (PEM format) used for authentication.",
      _UNSUPPORTED_SSL},
+    {_RK_GLOBAL, "ssl.certificate.store", _RK_C_STR, _RK(ssl.cert_store),
+     "Client identity in a Windows certificate store, used read-only. "
+     "Use CurrentUser/My/THUMBPRINT or LocalMachine/My/THUMBPRINT, where "
+     "THUMBPRINT is the 40 hexadecimal digit SHA-1 certificate identifier. "
+     "Separators may be `/` or `\\`; case, spaces, invisible marks copied "
+     "from the certificate manager and a `Cert:\\` prefix are accepted. "
+     "The certificate must already have an accessible private key. "
+     "Mutually exclusive with certificate, key and keystore inputs. "
+     "The client does not import or persist this identity. "
+     "Currently supported only by the Schannel TLS backend.",
+#if !WITH_SCHANNEL
+     .unsupported = "Windows certificate store identities need the Schannel "
+                    "TLS backend, which this build does not use"
+#endif
+    },
     {_RK_GLOBAL, "ssl_certificate", _RK_C_INTERNAL, _RK(ssl.key),
      "Client's public key as set by rd_kafka_conf_set_ssl_cert()",
      .dtor = rd_kafka_conf_cert_dtor, .copy = rd_kafka_conf_cert_copy,
@@ -4299,7 +4323,7 @@ const char *rd_kafka_conf_finalize(rd_kafka_type_t cltype,
         if (!conf->open_cb)
                 return "Mandatory config property `open_cb` not set";
 
-#if WITH_SSL
+#if WITH_TLS
         if (conf->ssl.keystore_location && !conf->ssl.keystore_password)
                 return "`ssl.keystore.password` is mandatory when "
                        "`ssl.keystore.location` is set";
@@ -4325,7 +4349,7 @@ const char *rd_kafka_conf_finalize(rd_kafka_type_t cltype,
 #endif
 
 
-#ifdef __APPLE__
+#if defined(__APPLE__) && WITH_SSL
         else if (!conf->ssl.ca && !conf->ssl.ca_location && !conf->ssl.ca_pem)
                 /* Default ssl.ca.location to 'probe' on OSX */
                 rd_kafka_conf_set(conf, "ssl.ca.location", "probe", NULL, 0);

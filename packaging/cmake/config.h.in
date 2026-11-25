@@ -38,6 +38,7 @@
 #define WITH_SOCKEM 1
 #cmakedefine01 WITH_SSL
 #cmakedefine01 WITH_TLS
+#cmakedefine01 WITH_SCHANNEL
 #cmakedefine01 WITH_CRYPTO
 #cmakedefine01 WITH_CRYPTO_OPENSSL
 #cmakedefine01 WITH_CRYPTO_BCRYPT
