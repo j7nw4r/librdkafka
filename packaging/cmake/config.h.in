@@ -37,6 +37,8 @@
 #define WITH_SNAPPY 1
 #define WITH_SOCKEM 1
 #cmakedefine01 WITH_SSL
+#cmakedefine01 WITH_CRYPTO
+#cmakedefine01 WITH_CRYPTO_OPENSSL
 #cmakedefine01 WITH_SASL
 #cmakedefine01 WITH_SASL_SCRAM
 #cmakedefine01 WITH_SASL_OAUTHBEARER

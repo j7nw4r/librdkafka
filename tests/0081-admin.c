@@ -5030,7 +5030,7 @@ static void do_test_UserScramCredentials(const char *what,
         /* Wait for results */
         event = rd_kafka_queue_poll(queue, -1 /*indefinitely*/);
         err   = rd_kafka_event_error(event);
-#if !WITH_SSL
+#if !WITH_CRYPTO
         TEST_ASSERT(err == RD_KAFKA_RESP_ERR__INVALID_ARG,
                     "Expected _INVALID_ARG, not %s", rd_kafka_err2name(err));
         rd_kafka_event_destroy(event);
@@ -5176,7 +5176,7 @@ static void do_test_UserScramCredentials(const char *what,
 
         rd_kafka_event_destroy(event);
 
-#if !WITH_SSL
+#if !WITH_CRYPTO
 final_checks:
 #endif
 

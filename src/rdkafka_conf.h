@@ -32,6 +32,7 @@
 
 #include "rdlist.h"
 #include "rdkafka_cert.h"
+#include "rdkafka_crypto.h"
 
 #if WITH_SSL && OPENSSL_VERSION_NUMBER >= 0x10100000 &&                        \
     !defined(OPENSSL_NO_ENGINE)
@@ -328,13 +329,7 @@ struct rd_kafka_conf_s {
                 char *username;
                 char *password;
 #if WITH_SASL_SCRAM
-                /* SCRAM EVP-wrapped hash function
-                 * (return value from EVP_shaX()) */
-                const void /*EVP_MD*/ *scram_evp;
-                /* SCRAM direct hash function (e.g., SHA256()) */
-                unsigned char *(*scram_H)(const unsigned char *d,
-                                          size_t n,
-                                          unsigned char *md);
+                rd_kafka_crypto_hash_t scram_hash;
                 /* Hash size */
                 size_t scram_H_size;
 #endif

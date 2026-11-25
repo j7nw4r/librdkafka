@@ -198,3 +198,57 @@ int rd_base64_decode(const rd_chariov_t *in, rd_chariov_t *out) {
         return -2;
 #endif
 }
+
+
+#include "rdunittest.h"
+
+/**
+ * @brief RFC 4648 section 10 vectors through the encoder and, if this build
+ *        supports it, the decoder.
+ */
+int unittest_base64(void) {
+        static const char *plain[]   = {"",     "f",     "fo",    "foo",
+                                        "foob", "fooba", "foobar"};
+        static const char *encoded[] = {
+            "", "Zg==", "Zm8=", "Zm9v", "Zm9vYg==", "Zm9vYmE=", "Zm9vYmFy"};
+        static const char *bad[]             = {"A", "Zg=", "Zm9v!AAA"};
+        static const unsigned char urlsafe[] = {0xfb, 0xff};
+        rd_chariov_t in, out, decoded;
+        char *str;
+        size_t i;
+        int r;
+
+        for (i = 0; i < RD_ARRAYSIZE(plain); i++) {
+                in.ptr  = (char *)plain[i];
+                in.size = strlen(plain[i]);
+                rd_base64_encode(&in, &out);
+                RD_UT_ASSERT(out.ptr && out.size == strlen(encoded[i]) &&
+                                 !strcmp(out.ptr, encoded[i]),
+                             "encode \"%s\"", plain[i]);
+
+                r = rd_base64_decode(&out, &decoded);
+                rd_free(out.ptr);
+                if (r == -2)
+                        continue; /* This build has no decoder. */
+                RD_UT_ASSERT(!r && decoded.size == in.size &&
+                                 !memcmp(decoded.ptr, in.ptr, in.size),
+                             "decode \"%s\"", encoded[i]);
+                rd_free(decoded.ptr);
+        }
+
+        for (i = 0; i < RD_ARRAYSIZE(bad); i++) {
+                in.ptr  = (char *)bad[i];
+                in.size = strlen(bad[i]);
+                r       = rd_base64_decode(&in, &out);
+                RD_UT_ASSERT(r == -1 || r == -2, "decode \"%s\" must fail",
+                             bad[i]);
+        }
+
+        in.ptr  = (char *)urlsafe;
+        in.size = sizeof(urlsafe);
+        str     = rd_base64_encode_str_urlsafe(&in);
+        RD_UT_ASSERT(str && !strcmp(str, "-_8"), "URL-safe encoding");
+        rd_free(str);
+
+        RD_UT_PASS();
+}

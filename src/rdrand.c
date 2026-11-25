@@ -31,10 +31,8 @@
 #include "rdtime.h"
 #include "tinycthread.h"
 #include "rdmurmur2.h"
+#include "rdkafka_crypto.h"
 
-#ifdef HAVE_OSSL_SECURE_RAND_BYTES
-#include <openssl/rand.h>
-#endif
 #if HAVE_GETENTROPY
 /* getentropy() can be present in one of these two */
 #include <unistd.h>
@@ -74,17 +72,16 @@ static int rd_rand() {
         return rand_num;
 }
 
-#if HAVE_OSSL_SECURE_RAND_BYTES
-static rd_bool_t rd_rand_bytes_by_ossl(unsigned char *buf, int num) {
-        int res     = -1;
+#if WITH_CRYPTO
+static rd_bool_t rd_rand_bytes_by_crypto(unsigned char *buf, unsigned int num) {
         int retries = 0;
-        while ((res = RAND_priv_bytes(buf, num)) != 1) {
+        while (rd_kafka_crypto_random(buf, num) != 0) {
                 if (++retries == 5)
-                        break;
+                        return rd_false;
 
                 rd_usleep(1000, 0); /* wait for more entropy */
         }
-        return res == 1;
+        return rd_true;
 }
 #endif
 
@@ -112,8 +109,8 @@ static rd_bool_t rd_rand_bytes_by_rand_s(unsigned char *buf, int num) {
 #endif
 
 rd_bool_t rd_rand_bytes(unsigned char *buf, unsigned int num) {
-#if HAVE_OSSL_SECURE_RAND_BYTES
-        if (rd_rand_bytes_by_ossl(buf, num))
+#if WITH_CRYPTO
+        if (rd_rand_bytes_by_crypto(buf, num))
                 return rd_true;
 #endif
 #if HAVE_GETENTROPY

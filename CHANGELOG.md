@@ -1,9 +1,22 @@
 # librdkafka v2.x.x (Unreleased)
 
+## Enhancements
+
+* SASL SCRAM, OAUTHBEARER/OIDC JWT signing and SCRAM credential upserts now
+  use a private crypto interface. The new CMake option
+  `RDKAFKA_CRYPTO_BACKEND` and configure option `--with-crypto-backend`
+  select `openssl` or `none`. OpenSSL stays the default (#5693).
+* New `builtin.features` flags `auth_crypto` and `auth_crypto_openssl`
+  (#5693).
+
+
 ## Fixes
 
 ### General fixes
 
+* OAUTHBEARER/OIDC: ES256 JWT assertions carried a DER-encoded signature.
+  They now carry the 64-byte `R || S` form that RFC 7518 section 3.4
+  requires (#5693).
 * Fix the bundled zlib being built without optimisation, which slowed down
   gzip compression in self-contained builds. Happening since 1.4.0 (#5673).
 

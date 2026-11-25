@@ -56,6 +56,7 @@ librdkafka also provides a native C++ interface.
     - [Threads and callbacks](#threads-and-callbacks)
     - [Brokers](#brokers)
       - [SSL](#ssl)
+      - [Authentication crypto backend](#authentication-crypto-backend)
       - [OAUTHBEARER with support for OIDC](#oauthbearer-with-support-for-oidc)
         - [JWT bearer grant type (KIP-1139)](#jwt-bearer-grant-type-kip-1139)
         - [Metadata based authentication](#metadata-based-authentication)
@@ -1193,6 +1194,24 @@ The predefined system store names are:
 
 For example, to read both intermediate and root CAs, set
 `ssl.ca.certificate.stores=CA,Root`.
+
+
+<a name="authentication-crypto-backend"></a>
+#### Authentication crypto backend
+
+SASL SCRAM, OIDC JWT signing and SCRAM credential upserts use a crypto
+backend for hashes, HMAC, PBKDF2, random bytes and signatures. The build
+selects one backend with the CMake option `RDKAFKA_CRYPTO_BACKEND` or the
+configure option `--with-crypto-backend`. There is no runtime switch and no
+public provider API.
+
+The backends are `openssl` and `none`. The `openssl` backend needs a build
+with OpenSSL. If you do not set the option, the backend is `openssl` when
+OpenSSL is enabled, else `none`. A build with `none` does not support SASL
+SCRAM, OIDC or SCRAM credential upserts.
+
+`builtin.features` contains `auth_crypto` when the build has a crypto backend,
+and `auth_crypto_openssl` when that backend is OpenSSL.
 
 
 <a name="oauthbearer-with-support-for-oidc"></a>

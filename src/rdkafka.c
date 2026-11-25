@@ -66,6 +66,7 @@
 #endif
 
 #include "rdtime.h"
+#include "rdkafka_crypto.h"
 #include "rdmap.h"
 #include "crc32c.h"
 #include "rdunittest.h"
@@ -194,6 +195,7 @@ static void rd_kafka_global_init0(void) {
          * object has been created. */
         rd_kafka_ssl_init();
 #endif
+        rd_kafka_crypto_init();
 
         cJSON_InitHooks(&json_hooks);
 
@@ -234,6 +236,7 @@ static void rd_kafka_global_cnt_incr(void) {
 #if WITH_SSL
                 rd_kafka_ssl_init();
 #endif
+                rd_kafka_crypto_init();
                 rd_kafka_sasl_global_init();
         }
         mtx_unlock(&rd_kafka_global_lock);
@@ -249,6 +252,7 @@ static void rd_kafka_global_cnt_decr(void) {
         rd_kafka_global_cnt--;
         if (rd_kafka_global_cnt == 0) {
                 rd_kafka_sasl_global_term();
+                rd_kafka_crypto_term();
 #if WITH_SSL
                 rd_kafka_ssl_term();
 #endif
@@ -2545,6 +2549,7 @@ static int rd_kafka_thread_main(void *arg) {
         rd_kafka_wrlock(rk);
         rd_kafka_wrunlock(rk);
 
+        rd_kafka_crypto_thread_term();
         rd_kafka_interceptors_on_thread_exit(rk, RD_KAFKA_THREAD_MAIN);
 
         rd_kafka_destroy_internal(rk);
@@ -2576,7 +2581,7 @@ rd_kafka_t *rd_kafka_new(rd_kafka_type_t type,
 #ifndef _WIN32
         sigset_t newset, oldset;
 #endif
-        char builtin_features[128];
+        char builtin_features[256];
         size_t bflen;
 
         rd_kafka_global_init();
