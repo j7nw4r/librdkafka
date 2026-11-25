@@ -34,7 +34,7 @@
 #include "rdkafka_int.h"
 #include "rdkafka_transport_int.h"
 #include "rdkafka_sasl_int.h"
-#include <openssl/evp.h>
+#include "rdbase64.h"
 #include "rdunittest.h"
 
 #if WITH_OAUTHBEARER_OIDC
@@ -840,9 +840,17 @@ static char *create_jws_compact_serialization(
         retval_jws = rd_malloc(retval_size);
         rd_snprintf(retval_jws, retval_size, "%s.", jose_header_encoded);
         jws_claims = retval_jws + strlen(retval_jws);
-        encode_len =
-            EVP_EncodeBlock((uint8_t *)jws_claims, (uint8_t *)claims_json,
-                            (int)strlen(claims_json));
+        {
+                rd_chariov_t claims = {.ptr  = claims_json,
+                                       .size = strlen(claims_json)};
+                rd_chariov_t encoded;
+
+                rd_base64_encode(&claims, &encoded);
+                rd_assert(encoded.ptr);
+                memcpy(jws_claims, encoded.ptr, encoded.size + 1);
+                encode_len = (int)encoded.size;
+                rd_free(encoded.ptr);
+        }
         rd_free(claims_json);
         jws_last_char = jws_claims + encode_len - 1;
 

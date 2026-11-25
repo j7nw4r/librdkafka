@@ -229,7 +229,12 @@ struct rd_kafka_property {
         .unsupported = "cyrus-sasl/libsasl2 not available at build time"
 #endif
 
-#define _UNSUPPORTED_OAUTHBEARER _UNSUPPORTED_SSL
+#if WITH_SASL_OAUTHBEARER
+#define _UNSUPPORTED_OAUTHBEARER .unsupported = NULL
+#else
+#define _UNSUPPORTED_OAUTHBEARER                                               \
+        .unsupported = "SASL OAUTHBEARER not available at build time"
+#endif
 
 #if WITH_SASL_SCRAM
 #define _UNSUPPORTED_SCRAM .unsupported = NULL
@@ -407,7 +412,7 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
 #endif
              },
              {0x400, "zstd", _UNSUPPORTED_ZSTD},
-             {0x800, "sasl_oauthbearer", _UNSUPPORTED_SSL},
+             {0x800, "sasl_oauthbearer", _UNSUPPORTED_OAUTHBEARER},
              {0x1000, "http", _UNSUPPORTED_HTTP},
              {0x2000, "oidc", _UNSUPPORTED_OIDC},
              {0x10000, "auth_crypto_openssl"

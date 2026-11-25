@@ -173,11 +173,7 @@ void foo (void) {
     if [[ "$WITH_CRYPTO" == "y" ]]; then
         mkl_allvar_set WITH_SASL_SCRAM WITH_SASL_SCRAM y
     fi
-    if [[ "$WITH_SSL" == "y" ]]; then
-        # SASL OAUTHBEARER's default unsecured JWS implementation
-        # requires base64 encoding from OpenSSL
-        mkl_allvar_set WITH_SASL_OAUTHBEARER WITH_SASL_OAUTHBEARER y
-    fi
+    mkl_allvar_set WITH_SASL_OAUTHBEARER WITH_SASL_OAUTHBEARER y
     if [[ "$WITH_CRYPTO" == "y" && $WITH_CURL == y ]]; then
         mkl_allvar_set WITH_OAUTHBEARER_OIDC WITH_OAUTHBEARER_OIDC y
     fi
