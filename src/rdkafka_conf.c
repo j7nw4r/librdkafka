@@ -140,17 +140,41 @@ struct rd_kafka_property {
         .unsupported = "TLS backend not available at build time"
 #endif
 
-#if OPENSSL_VERSION_NUMBER >= 0x1000200fL && defined(WITH_SSL) &&              \
+/* OpenSSL-only broker TLS properties: another TLS backend refuses them at
+ * rd_kafka_conf_set() with one message, before any version requirement. */
+#if WITH_SSL
+#define _UNSUPPORTED_OPENSSL .unsupported = NULL
+#elif WITH_SCHANNEL
+#define _UNSUPPORTED_OPENSSL                                                   \
+        .unsupported = "OpenSSL-only; this build uses Schannel TLS"
+#else
+#define _UNSUPPORTED_OPENSSL _UNSUPPORTED_SSL
+#endif
+
+#if OPENSSL_VERSION_NUMBER >= 0x1000200fL && WITH_SSL &&                       \
     !defined(LIBRESSL_VERSION_NUMBER)
 #define _UNSUPPORTED_OPENSSL_1_0_2 .unsupported = NULL
+#elif !WITH_SSL
+#define _UNSUPPORTED_OPENSSL_1_0_2 _UNSUPPORTED_OPENSSL
 #else
 #define _UNSUPPORTED_OPENSSL_1_0_2                                             \
         .unsupported = "OpenSSL >= 1.0.2 not available at build time"
 #endif
 
-#if OPENSSL_VERSION_NUMBER >= 0x10100000 && defined(WITH_SSL) &&               \
+#if WITH_SCHANNEL
+#define _UNSUPPORTED_ENDPOINT_ID .unsupported = NULL
+#define _UNSUPPORTED_ENDPOINT_ID_NONE                                          \
+        .unsupported = "Schannel always verifies the broker hostname"
+#else
+#define _UNSUPPORTED_ENDPOINT_ID      _UNSUPPORTED_OPENSSL_1_0_2
+#define _UNSUPPORTED_ENDPOINT_ID_NONE .unsupported = NULL
+#endif
+
+#if OPENSSL_VERSION_NUMBER >= 0x10100000 && WITH_SSL &&                        \
     !defined(LIBRESSL_VERSION_NUMBER)
 #define _UNSUPPORTED_OPENSSL_1_1_0 .unsupported = NULL
+#elif !WITH_SSL
+#define _UNSUPPORTED_OPENSSL_1_1_0 _UNSUPPORTED_OPENSSL
 #else
 #define _UNSUPPORTED_OPENSSL_1_1_0                                             \
         .unsupported = "OpenSSL >= 1.1.0 not available at build time"
@@ -158,13 +182,17 @@ struct rd_kafka_property {
 
 #if WITH_SSL_ENGINE
 #define _UNSUPPORTED_SSL_ENGINE .unsupported = NULL
+#elif !WITH_SSL
+#define _UNSUPPORTED_SSL_ENGINE _UNSUPPORTED_OPENSSL
 #else
 #define _UNSUPPORTED_SSL_ENGINE                                                \
         .unsupported = "OpenSSL >= 1.1.x not available at build time"
 #endif
 
-#if OPENSSL_VERSION_NUMBER >= 0x30000000 && defined(WITH_SSL)
+#if OPENSSL_VERSION_NUMBER >= 0x30000000 && WITH_SSL
 #define _UNSUPPORTED_SSL_3 .unsupported = NULL
+#elif !WITH_SSL
+#define _UNSUPPORTED_SSL_3 _UNSUPPORTED_OPENSSL
 #else
 #define _UNSUPPORTED_SSL_3                                                     \
         .unsupported = "OpenSSL >= 3.0.0 not available at build time"
@@ -895,29 +923,35 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
      "encryption, MAC and key exchange algorithm used to negotiate the "
      "security settings for a network connection using TLS or SSL network "
      "protocol. See manual page for `ciphers(1)` and "
-     "`SSL_CTX_set_cipher_list(3).",
-     _UNSUPPORTED_SSL},
+     "`SSL_CTX_set_cipher_list(3). OpenSSL only: Schannel builds refuse it "
+     "and use the Windows cipher suite policy.",
+     _UNSUPPORTED_OPENSSL},
     {_RK_GLOBAL, "ssl.curves.list", _RK_C_STR, _RK(ssl.curves_list),
      "The supported-curves extension in the TLS ClientHello message specifies "
      "the curves (standard/named, or 'explicit' GF(2^k) or GF(p)) the client "
      "is willing to have the server use. See manual page for "
-     "`SSL_CTX_set1_curves_list(3)`. OpenSSL >= 1.0.2 required.",
+     "`SSL_CTX_set1_curves_list(3)`. OpenSSL >= 1.0.2 required; Schannel "
+     "builds refuse it.",
      _UNSUPPORTED_OPENSSL_1_0_2},
     {_RK_GLOBAL, "ssl.sigalgs.list", _RK_C_STR, _RK(ssl.sigalgs_list),
      "The client uses the TLS ClientHello signature_algorithms extension "
      "to indicate to the server which signature/hash algorithm pairs "
      "may be used in digital signatures. See manual page for "
-     "`SSL_CTX_set1_sigalgs_list(3)`. OpenSSL >= 1.0.2 required.",
+     "`SSL_CTX_set1_sigalgs_list(3)`. OpenSSL >= 1.0.2 required; Schannel "
+     "builds refuse it.",
      _UNSUPPORTED_OPENSSL_1_0_2},
     {_RK_GLOBAL | _RK_SENSITIVE, "ssl.key.location", _RK_C_STR,
      _RK(ssl.key_location),
-     "Path to client's private key (PEM) used for authentication.",
+     "Path to client's private key (PEM) used for authentication. "
+     "Schannel builds need an unencrypted PKCS#8 key.",
      _UNSUPPORTED_SSL},
     {_RK_GLOBAL | _RK_SENSITIVE, "ssl.key.password", _RK_C_STR,
      _RK(ssl.key_password),
      "Private key passphrase (for use with `ssl.key.location` "
-     "and `set_ssl_cert()`)",
-     _UNSUPPORTED_SSL},
+     "and `set_ssl_cert()`). OpenSSL only: Schannel builds refuse it and "
+     "need an unencrypted PKCS#8 key, a PKCS#12 keystore or "
+     "`ssl.certificate.store`.",
+     _UNSUPPORTED_OPENSSL},
     {_RK_GLOBAL | _RK_SENSITIVE, "ssl.key.pem", _RK_C_STR, _RK(ssl.key_pem),
      "Client's private key string (PEM format) used for authentication.",
      _UNSUPPORTED_SSL},
@@ -965,7 +999,9 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
      "`probe` a list of standard paths will be probed and the first one "
      "found will be used as the default CA certificate location path. "
      "If OpenSSL is dynamically linked the OpenSSL library's default "
-     "path will be used (see `OPENSSLDIR` in `openssl version -a`).",
+     "path will be used (see `OPENSSLDIR` in `openssl version -a`). "
+     "Schannel builds need a PEM file: directories and `probe` are refused, "
+     "and an unset value uses the Windows Root store.",
      _UNSUPPORTED_SSL},
     {_RK_GLOBAL, "https.ca.location", _RK_C_STR, _RK(https.ca_location),
      "File or directory path to CA certificate(s) for verifying "
@@ -1004,7 +1040,8 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
      "order as stores are specified. If no certificates can be loaded "
      "from any of the specified stores an error is logged and the "
      "OpenSSL library's default CA location is used instead. "
-     "Store names are typically one or more of: MY, Root, Trust, CA.",
+     "Store names are typically one or more of: MY, Root, Trust, CA. "
+     "Schannel builds accept only `Root` (system trust, the default).",
      .sdef = "Root",
 #if !defined(_WIN32)
      .unsupported = "configuration only valid on Windows"
@@ -1012,17 +1049,20 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
     },
 
     {_RK_GLOBAL, "ssl.crl.location", _RK_C_STR, _RK(ssl.crl_location),
-     "Path to CRL for verifying broker's certificate validity.",
-     _UNSUPPORTED_SSL},
+     "Path to CRL for verifying broker's certificate validity. "
+     "OpenSSL only: Schannel builds refuse it.",
+     _UNSUPPORTED_OPENSSL},
     {_RK_GLOBAL, "ssl.keystore.location", _RK_C_STR, _RK(ssl.keystore_location),
-     "Path to client's keystore (PKCS#12) used for authentication.",
+     "Path to client's keystore (PKCS#12) used for authentication. "
+     "Schannel imports it without persisting the key; some PKCS#12 keys "
+     "cannot be used that way, in which case use `ssl.certificate.store`.",
      _UNSUPPORTED_SSL},
     {_RK_GLOBAL | _RK_SENSITIVE, "ssl.keystore.password", _RK_C_STR,
      _RK(ssl.keystore_password), "Client's keystore (PKCS#12) password.",
      _UNSUPPORTED_SSL},
     {_RK_GLOBAL, "ssl.providers", _RK_C_STR, _RK(ssl.providers),
      "Comma-separated list of OpenSSL 3.0.x implementation providers. "
-     "E.g., \"default,legacy\".",
+     "E.g., \"default,legacy\". OpenSSL only.",
      _UNSUPPORTED_SSL_3},
     {_RK_GLOBAL | _RK_DEPRECATED, "ssl.engine.location", _RK_C_STR,
      _RK(ssl.engine_location),
@@ -1031,7 +1071,7 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
      "replaced by OpenSSL 3 providers.",
      _UNSUPPORTED_SSL_ENGINE},
     {_RK_GLOBAL, "ssl.engine.id", _RK_C_STR, _RK(ssl.engine_id),
-     "OpenSSL engine id is the name used for loading engine.",
+     "OpenSSL engine id is the name used for loading engine. OpenSSL only.",
      .sdef = "dynamic", _UNSUPPORTED_SSL_ENGINE},
     {_RK_GLOBAL, "ssl_engine_callback_data", _RK_C_PTR,
      _RK(ssl.engine_callback_data),
@@ -1042,7 +1082,8 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
      _RK(ssl.enable_verify),
      "Enable OpenSSL's builtin broker (server) certificate verification. "
      "This verification can be extended by the application by "
-     "implementing a certificate_verify_cb.",
+     "implementing a certificate_verify_cb. Schannel builds always verify "
+     "and refuse `false` at client creation.",
      0, 1, 1, _UNSUPPORTED_SSL},
     {_RK_GLOBAL, "ssl.endpoint.identification.algorithm", _RK_C_S2I,
      _RK(ssl.endpoint_identification),
@@ -1051,14 +1092,17 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
      "https - Server (broker) hostname verification as "
      "specified in RFC2818. "
      "none - No endpoint verification. "
-     "OpenSSL >= 1.0.2 required.",
+     "OpenSSL >= 1.0.2 required. Schannel builds always verify the "
+     "hostname and refuse `none`.",
      .vdef = RD_KAFKA_SSL_ENDPOINT_ID_HTTPS,
-     .s2i  = {{RD_KAFKA_SSL_ENDPOINT_ID_NONE, "none"},
+     .s2i  = {{RD_KAFKA_SSL_ENDPOINT_ID_NONE, "none",
+               _UNSUPPORTED_ENDPOINT_ID_NONE},
               {RD_KAFKA_SSL_ENDPOINT_ID_HTTPS, "https"}},
-     _UNSUPPORTED_OPENSSL_1_0_2},
+     _UNSUPPORTED_ENDPOINT_ID},
     {_RK_GLOBAL, "ssl.certificate.verify_cb", _RK_C_PTR,
      _RK(ssl.cert_verify_cb),
-     "Callback to verify the broker certificate chain.", _UNSUPPORTED_SSL},
+     "Callback to verify the broker certificate chain. OpenSSL only.",
+     _UNSUPPORTED_OPENSSL},
 
     /* Point user in the right direction if they try to apply
      * Java client SSL / JAAS properties. */
@@ -5100,9 +5144,16 @@ int unittest_conf(void) {
                                 break;
 
                         case _RK_C_S2F:
-                        case _RK_C_S2I:
-                                val = prop->s2i[0].str;
+                        case _RK_C_S2I: {
+                                int j = 0;
+                                /* Use the first value this build supports. */
+                                while (prop->s2i[j].str &&
+                                       prop->s2i[j].unsupported)
+                                        j++;
+                                val = prop->s2i[j].str ? prop->s2i[j].str
+                                                       : prop->s2i[0].str;
                                 break;
+                        }
 
                         case _RK_C_PTR:
                         case _RK_C_ALIAS:
