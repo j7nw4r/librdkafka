@@ -12,3 +12,5 @@ extfile
 !client.keystore.intermediate.p12
 !client2.certificate.intermediate.pem
 !client2.intermediate.key
+!client2.ca.pem
+!client2.pkcs8.key
