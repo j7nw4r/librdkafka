@@ -58,6 +58,7 @@
 
 #if WITH_OAUTHBEARER_OIDC
 #include <curl/curl.h>
+#include "rdhttp.h"
 #endif
 
 struct rd_kafka_property {
@@ -1025,6 +1026,23 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
      "CA certificate string (PEM format) for verifying HTTPS endpoints. "
      "Mutually exclusive with `https.ca.location`. "
      "Optional: see `https.ca.location`.",
+     _UNSUPPORTED_HTTPS},
+    {_RK_GLOBAL, "https.revocation.check", _RK_C_S2I,
+     _RK(https.revocation_check),
+     "Certificate revocation checking for HTTPS endpoints, like "
+     "`sasl.oauthbearer.token.endpoint.url`. "
+     "`default` keeps the behavior of the libcurl TLS backend: the Schannel "
+     "backend checks revocation and fails when the status is unknown (for "
+     "example a private CA without a reachable CRL), and OpenSSL-based "
+     "backends do not check revocation. "
+     "`best_effort` ignores missing or offline revocation information. "
+     "`none` disables revocation checks. `best_effort` and `none` need "
+     "libcurl with the Schannel TLS backend (and libcurl >= 7.70.0 for "
+     "`best_effort`); with another backend client creation fails.",
+     .vdef = RD_KAFKA_HTTPS_REVOCATION_DEFAULT,
+     .s2i  = {{RD_KAFKA_HTTPS_REVOCATION_DEFAULT, "default"},
+              {RD_KAFKA_HTTPS_REVOCATION_BEST_EFFORT, "best_effort"},
+              {RD_KAFKA_HTTPS_REVOCATION_NONE, "none"}},
      _UNSUPPORTED_HTTPS},
     {_RK_GLOBAL | _RK_SENSITIVE, "ssl.ca.pem", _RK_C_STR, _RK(ssl.ca_pem),
      "CA certificate string (PEM format) for verifying the broker's key.",
@@ -4402,6 +4420,15 @@ const char *rd_kafka_conf_finalize(rd_kafka_type_t cltype,
         if (!conf->https.ca_location && !conf->https.ca_pem)
                 rd_kafka_conf_set(conf, "https.ca.location", "probe", NULL, 0);
 #endif
+#endif
+
+#if WITH_OAUTHBEARER_OIDC
+        {
+                const char *reason = rd_http_revocation_unsupported(
+                    conf->https.revocation_check);
+                if (reason)
+                        return reason;
+        }
 #endif
 
 #if WITH_SASL_OAUTHBEARER

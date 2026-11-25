@@ -912,6 +912,35 @@ int main_0004_conf(int argc, char **argv) {
         }
 #endif /* WITH_SCHANNEL */
 
+#if WITH_OAUTHBEARER_OIDC
+        {
+                TEST_ASSERT(test_check_builtin("http") &&
+                                test_check_builtin("oidc"),
+                            "OIDC build must report http and oidc in "
+                            "builtin.features");
+                conf = rd_kafka_conf_new();
+                TEST_ASSERT(rd_kafka_conf_set(conf, "https.revocation.check",
+                                              "strict", errstr,
+                                              sizeof(errstr)) ==
+                                RD_KAFKA_CONF_INVALID,
+                            "unknown https.revocation.check value accepted");
+                test_conf_set(conf, "https.revocation.check", "none");
+                rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr,
+                                  sizeof(errstr));
+                if (rk)
+                        rd_kafka_destroy(rk);
+                else {
+                        /* Only libcurl with Schannel supports it. */
+                        TEST_ASSERT(strstr(errstr, "https.revocation.check") &&
+                                        strstr(errstr, "Schannel"),
+                                    "https.revocation.check=none: %s", errstr);
+                        TEST_SAY("https.revocation.check=none refused: %s\n",
+                                 errstr);
+                        rd_kafka_conf_destroy(conf);
+                }
+        }
+#endif /* WITH_OAUTHBEARER_OIDC */
+
         TEST_ASSERT(test_check_builtin("auth_crypto") == WITH_CRYPTO &&
                         test_check_builtin("auth_crypto_openssl") ==
                             WITH_CRYPTO_OPENSSL &&

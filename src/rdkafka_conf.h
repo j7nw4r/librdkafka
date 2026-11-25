@@ -177,6 +177,12 @@ typedef enum {
 
 
 typedef enum {
+        RD_KAFKA_HTTPS_REVOCATION_DEFAULT,     /**< libcurl backend default */
+        RD_KAFKA_HTTPS_REVOCATION_BEST_EFFORT, /**< Ignore unknown status */
+        RD_KAFKA_HTTPS_REVOCATION_NONE,        /**< No revocation checks */
+} rd_kafka_https_revocation_t;
+
+typedef enum {
         RD_KAFKA_SSL_ENDPOINT_ID_NONE,
         RD_KAFKA_SSL_ENDPOINT_ID_HTTPS, /**< RFC2818 */
 } rd_kafka_ssl_endpoint_id_t;
@@ -315,6 +321,7 @@ struct rd_kafka_conf_s {
         struct {
                 char *ca_location;
                 char *ca_pem;
+                rd_kafka_https_revocation_t revocation_check;
         } https;
 
         struct {
