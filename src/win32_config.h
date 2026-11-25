@@ -37,6 +37,7 @@
 #define WITH_TLS              1
 #define WITH_CRYPTO           1
 #define WITH_CRYPTO_OPENSSL   1
+#define WITH_CRYPTO_BCRYPT    0
 #define WITH_ZLIB             1
 #define WITH_SNAPPY           1
 #define WITH_ZSTD             1

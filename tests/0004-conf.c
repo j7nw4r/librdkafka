@@ -836,10 +836,12 @@ int main_0004_conf(int argc, char **argv) {
 
         TEST_ASSERT(test_check_builtin("auth_crypto") == WITH_CRYPTO &&
                         test_check_builtin("auth_crypto_openssl") ==
-                            WITH_CRYPTO_OPENSSL,
-                    "builtin.features does not match WITH_CRYPTO=%d and "
-                    "WITH_CRYPTO_OPENSSL=%d",
-                    WITH_CRYPTO, WITH_CRYPTO_OPENSSL);
+                            WITH_CRYPTO_OPENSSL &&
+                        test_check_builtin("auth_crypto_bcrypt") ==
+                            WITH_CRYPTO_BCRYPT,
+                    "builtin.features does not match WITH_CRYPTO=%d, "
+                    "WITH_CRYPTO_OPENSSL=%d and WITH_CRYPTO_BCRYPT=%d",
+                    WITH_CRYPTO, WITH_CRYPTO_OPENSSL, WITH_CRYPTO_BCRYPT);
 
         {
                 int with_ssl = 0;

@@ -80,6 +80,7 @@ typedef struct rd_kafka_crypto_ops_s {
         void (*key_destroy)(rd_kafka_crypto_key_t *);
 } rd_kafka_crypto_ops_t;
 extern const rd_kafka_crypto_ops_t rd_kafka_crypto_openssl_ops;
+extern const rd_kafka_crypto_ops_t rd_kafka_crypto_bcrypt_ops;
 extern const rd_kafka_crypto_ops_t *const rd_kafka_crypto_ops;
 void rd_kafka_crypto_init(void);
 void rd_kafka_crypto_term(void);

@@ -393,8 +393,8 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
      "with its list of required features to check for library support. "
      "`ssl` means broker TLS, and `tls_openssl` names the OpenSSL backend. "
      "`auth_crypto` means a crypto backend for SASL SCRAM, OIDC JWT signing "
-     "and SCRAM credential upserts, and `auth_crypto_openssl` names the "
-     "OpenSSL backend.",
+     "and SCRAM credential upserts, and `auth_crypto_openssl` or "
+     "`auth_crypto_bcrypt` names the backend.",
      0, 0x7fffffff, 0x7ffff,
      .s2i = {{0x1, "gzip", _UNSUPPORTED_ZLIB},
              {0x2, "snappy", _UNSUPPORTED_SNAPPY},
@@ -426,6 +426,13 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
 #if !WITH_CRYPTO_OPENSSL
               ,
               .unsupported = "OpenSSL crypto backend not available at build "
+                             "time"
+#endif
+             },
+             {0x20000, "auth_crypto_bcrypt"
+#if !WITH_CRYPTO_BCRYPT
+              ,
+              .unsupported = "BCrypt crypto backend not available at build "
                              "time"
 #endif
              },

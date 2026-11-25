@@ -1211,15 +1211,31 @@ OpenSSL is enabled, else `none`. A build with `none` does not support the
 SASL SCRAM, OIDC JWT signing and SCRAM credential upserts use a crypto
 backend for hashes, HMAC, PBKDF2, random bytes and signatures. The CMake
 option `RDKAFKA_CRYPTO_BACKEND` or the configure option
-`--with-crypto-backend` selects it. The backends are `openssl` and `none`.
-If you do not set the option, the backend is `openssl` when the TLS backend
-is `openssl`, else `none`. With the TLS backend `none`, the `openssl` crypto
-backend links only libcrypto. A build with `none` does not support SASL
+`--with-crypto-backend` selects it. The backends are `openssl`, `bcrypt` and
+`none`. If you do not set the option, the backend is `openssl` when the TLS
+backend is `openssl`, else `none`. With the TLS backend `none`, the `openssl`
+crypto backend links only libcrypto. A build with `none` does not support SASL
 SCRAM, OIDC or SCRAM credential upserts.
+
+The `bcrypt` backend is for Windows only. It uses the BCrypt and NCrypt
+functions of Windows CNG and links `bcrypt`, `ncrypt` and `crypt32`. Use it
+with the TLS backend `none` to build a library without OpenSSL, or with the
+TLS backend `openssl`. For example:
+
+```
+cmake -DRDKAFKA_TLS_BACKEND=none -DRDKAFKA_CRYPTO_BACKEND=bcrypt ..
+```
+
+With `bcrypt`, the OIDC assertion key in
+`sasl.oauthbearer.assertion.private.key.file` or
+`sasl.oauthbearer.assertion.private.key.pem` must be an unencrypted PKCS#8 key
+in PEM or DER form. The key load fails if
+`sasl.oauthbearer.assertion.private.key.passphrase` is set. A backend choice
+alone does not make a deployment FIPS compliant.
 
 `builtin.features` contains `ssl` and `tls_openssl` when the TLS backend is
 OpenSSL. It contains `auth_crypto` when the build has a crypto backend, and
-`auth_crypto_openssl` when that backend is OpenSSL.
+`auth_crypto_openssl` or `auth_crypto_bcrypt` names that backend.
 
 
 <a name="oauthbearer-with-support-for-oidc"></a>
