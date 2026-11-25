@@ -36,7 +36,12 @@
 #include "rdkafka_int.h"
 #include "rdkafka_transport_int.h"
 #include "rdkafka_cert.h"
+#include "rdkafka_ssl.h"
+#include "rdkafka_tls.h"
 #include "rdunittest.h"
+
+#include <openssl/err.h>
+#include <openssl/pkcs12.h>
 
 #ifdef _WIN32
 #include <wincrypt.h>
@@ -76,13 +81,20 @@ static int rd_kafka_ssl_locks_cnt;
 #endif
 
 
+static SSL *rd_kafka_openssl_ssl(rd_kafka_transport_t *rktrans) {
+        return rktrans->rktrans_tls;
+}
+
+
 /**
  * @brief Close and destroy SSL session
  */
 void rd_kafka_transport_ssl_close(rd_kafka_transport_t *rktrans) {
-        SSL_shutdown(rktrans->rktrans_ssl);
-        SSL_free(rktrans->rktrans_ssl);
-        rktrans->rktrans_ssl = NULL;
+        SSL *ssl = rd_kafka_openssl_ssl(rktrans);
+
+        SSL_shutdown(ssl);
+        SSL_free(ssl);
+        rktrans->rktrans_tls = NULL;
 }
 
 
@@ -219,7 +231,7 @@ rd_kafka_transport_ssl_io_update(rd_kafka_transport_t *rktrans,
                                  int ret,
                                  char *errstr,
                                  size_t errstr_size) {
-        int serr = SSL_get_error(rktrans->rktrans_ssl, ret);
+        int serr = SSL_get_error(rd_kafka_openssl_ssl(rktrans), ret);
         int serr2;
 
         switch (serr) {
@@ -278,7 +290,7 @@ ssize_t rd_kafka_transport_ssl_send(rd_kafka_transport_t *rktrans,
                 int r;
                 size_t r2;
 
-                r = SSL_write(rktrans->rktrans_ssl, p, (int)rlen);
+                r = SSL_write(rd_kafka_openssl_ssl(rktrans), p, (int)rlen);
 
                 if (unlikely(r <= 0)) {
                         if (rd_kafka_transport_ssl_io_update(rktrans, r, errstr,
@@ -316,7 +328,7 @@ ssize_t rd_kafka_transport_ssl_recv(rd_kafka_transport_t *rktrans,
 
                 rd_kafka_transport_ssl_clear_error(rktrans);
 
-                r = SSL_read(rktrans->rktrans_ssl, p, (int)len);
+                r = SSL_read(rd_kafka_openssl_ssl(rktrans), p, (int)len);
 
                 if (unlikely(r <= 0)) {
                         if (rd_kafka_transport_ssl_io_update(rktrans, r, errstr,
@@ -528,7 +540,8 @@ static int rd_kafka_transport_ssl_set_endpoint_id(rd_kafka_transport_t *rktrans,
 #if (OPENSSL_VERSION_NUMBER >= 0x0090806fL) && !defined(OPENSSL_NO_TLSEXT)
         /* If non-numerical hostname, send it for SNI */
         if (!is_ip_literal &&
-            !SSL_set_tlsext_host_name(rktrans->rktrans_ssl, name_for_verify))
+            !SSL_set_tlsext_host_name(rd_kafka_openssl_ssl(rktrans),
+                                      name_for_verify))
                 goto fail;
 #endif
 
@@ -548,7 +561,7 @@ static int rd_kafka_transport_ssl_set_endpoint_id(rd_kafka_transport_t *rktrans,
         {
                 X509_VERIFY_PARAM *param;
 
-                param = SSL_get0_param(rktrans->rktrans_ssl);
+                param = SSL_get0_param(rd_kafka_openssl_ssl(rktrans));
 
                 /* Match an IP literal against the certificate's iPAddress
                  * entries and a hostname against its dNSName entries.
@@ -612,11 +625,11 @@ int rd_kafka_transport_ssl_connect(rd_kafka_broker_t *rkb,
                                    size_t errstr_size) {
         int r;
 
-        rktrans->rktrans_ssl = SSL_new(rkb->rkb_rk->rk_conf.ssl.ctx);
-        if (!rktrans->rktrans_ssl)
+        rktrans->rktrans_tls = SSL_new(rkb->rkb_rk->rk_conf.ssl.ctx);
+        if (!rktrans->rktrans_tls)
                 goto fail;
 
-        if (!SSL_set_fd(rktrans->rktrans_ssl, (int)rktrans->rktrans_s))
+        if (!SSL_set_fd(rd_kafka_openssl_ssl(rktrans), (int)rktrans->rktrans_s))
                 goto fail;
 
         if (rd_kafka_transport_ssl_set_endpoint_id(rktrans, errstr,
@@ -625,7 +638,7 @@ int rd_kafka_transport_ssl_connect(rd_kafka_broker_t *rkb,
 
         rd_kafka_transport_ssl_clear_error(rktrans);
 
-        r = SSL_connect(rktrans->rktrans_ssl);
+        r = SSL_connect(rd_kafka_openssl_ssl(rktrans));
         if (r == 1) {
                 /* Connected, highly unlikely since this is a
                  * non-blocking operation. */
@@ -653,7 +666,7 @@ rd_kafka_transport_ssl_io_event(rd_kafka_transport_t *rktrans, int events) {
         if (events & POLLOUT) {
                 rd_kafka_transport_ssl_clear_error(rktrans);
 
-                r = SSL_write(rktrans->rktrans_ssl, NULL, 0);
+                r = SSL_write(rd_kafka_openssl_ssl(rktrans), NULL, 0);
                 if (rd_kafka_transport_ssl_io_update(rktrans, r, errstr,
                                                      sizeof(errstr)) == -1)
                         goto fail;
@@ -680,9 +693,9 @@ static int rd_kafka_transport_ssl_verify(rd_kafka_transport_t *rktrans) {
                 return 0;
 
 #if OPENSSL_VERSION_NUMBER >= 0x30000000
-        cert = SSL_get1_peer_certificate(rktrans->rktrans_ssl);
+        cert = SSL_get1_peer_certificate(rd_kafka_openssl_ssl(rktrans));
 #else
-        cert = SSL_get_peer_certificate(rktrans->rktrans_ssl);
+        cert = SSL_get_peer_certificate(rd_kafka_openssl_ssl(rktrans));
 #endif
         X509_free(cert);
         if (!cert) {
@@ -692,7 +705,8 @@ static int rd_kafka_transport_ssl_verify(rd_kafka_transport_t *rktrans) {
                 return -1;
         }
 
-        if ((rl = SSL_get_verify_result(rktrans->rktrans_ssl)) != X509_V_OK) {
+        if ((rl = SSL_get_verify_result(rd_kafka_openssl_ssl(rktrans))) !=
+            X509_V_OK) {
                 rd_kafka_broker_fail(rktrans->rktrans_rkb, LOG_ERR,
                                      RD_KAFKA_RESP_ERR__SSL,
                                      "Failed to verify broker certificate: %s",
@@ -717,7 +731,7 @@ int rd_kafka_transport_ssl_handshake(rd_kafka_transport_t *rktrans) {
         char errstr[512];
         int r;
 
-        r = SSL_do_handshake(rktrans->rktrans_ssl);
+        r = SSL_do_handshake(rd_kafka_openssl_ssl(rktrans));
         if (r == 1) {
                 /* SSL handshake done. Verify. */
                 if (rd_kafka_transport_ssl_verify(rktrans) == -1)
@@ -2178,6 +2192,37 @@ void rd_kafka_ssl_init(void) {
         OpenSSL_add_all_algorithms();
 #endif
 }
+
+
+static void rd_kafka_openssl_thread_term(void) {
+        /* Remove OpenSSL per-thread error state to avoid memory leaks */
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L && !defined(LIBRESSL_VERSION_NUMBER)
+        /*(OpenSSL libraries handle thread init and deinit)
+         * https://github.com/openssl/openssl/pull/1048 */
+#elif OPENSSL_VERSION_NUMBER >= 0x10000000L
+        ERR_remove_thread_state(NULL);
+#endif
+}
+
+static void rd_kafka_openssl_ctx_term(rd_kafka_t *rk) {
+        if (!rk->rk_conf.ssl.ctx)
+                return;
+        rd_kafka_dbg(rk, GENERIC, "TERMINATE", "Destroying SSL CTX");
+        rd_kafka_ssl_ctx_term(rk);
+}
+
+const rd_kafka_tls_ops_t rd_kafka_openssl_ops = {
+    .global_init = rd_kafka_ssl_init,
+    .global_term = rd_kafka_ssl_term,
+    .thread_term = rd_kafka_openssl_thread_term,
+    .ctx_init    = rd_kafka_ssl_ctx_init,
+    .ctx_term    = rd_kafka_openssl_ctx_term,
+    .connect     = rd_kafka_transport_ssl_connect,
+    .handshake   = rd_kafka_transport_ssl_handshake,
+    .send        = rd_kafka_transport_ssl_send,
+    .recv        = rd_kafka_transport_ssl_recv,
+    .close       = rd_kafka_transport_ssl_close,
+};
 
 /**
  * @brief Unit test for SSL hostname normalization.

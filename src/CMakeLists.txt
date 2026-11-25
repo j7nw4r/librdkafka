@@ -40,6 +40,7 @@ set(
     rdkafka_timer.c
     rdkafka_topic.c
     rdkafka_transport.c
+    rdkafka_tls.c
     rdkafka_crypto.c
     rdkafka_interceptor.c
     rdkafka_header.c
