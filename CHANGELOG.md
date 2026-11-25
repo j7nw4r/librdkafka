@@ -20,6 +20,18 @@
   select it. With the TLS backend `none`, the library does not link OpenSSL
   (#5693).
 * New `builtin.features` flag `auth_crypto_bcrypt` (#5693).
+* New Windows TLS backend `schannel`, which uses the Windows Schannel SSP.
+  CMake `RDKAFKA_TLS_BACKEND=schannel` and configure
+  `--with-tls-backend=schannel` select it, and the crypto backend then
+  defaults to `bcrypt`, so the library does not link OpenSSL. Schannel
+  builds refuse the OpenSSL-only properties. See the *TLS and authentication
+  crypto backends* section of INTRODUCTION.md for the limits (#5693).
+* New configuration property `ssl.certificate.store` selects the client
+  certificate and key from the Windows My store in Schannel builds (#5693).
+* New configuration property `https.revocation.check` controls the
+  certificate revocation check of OIDC HTTPS requests through libcurl with
+  Schannel (#5693).
+* New `builtin.features` flag `tls_schannel` (#5693).
 
 
 ## Fixes
@@ -43,6 +55,21 @@
   salt and the OIDC token payload (#5693).
 * Windows: CMake builds with `WITH_CURL=ON` did not enable HTTP and OIDC
   support (#5693).
+* Windows: SASL GSSAPI in MSVC CMake builds called the ANSI SSPI functions
+  with a wide service principal name and failed with
+  "Target unknown (0x80090303)". The client now calls the wide functions
+  (#5693).
+* Windows: `rd_file_stat()` did not report directories, because the 8-bit
+  `rd_bool_t` truncated the `S_IFDIR` flag to zero. A directory in
+  `https.ca.location` was used as a file (#5693).
+* SSL: the CA store and certificate chain from
+  `rd_kafka_conf_set_ssl_cert()` were usable by only the first client
+  created from a configuration or its duplicates (#5693).
+* OAUTHBEARER/OIDC: `https.ca.location` and `https.ca.pem` are now applied
+  with any libcurl TLS backend, also in builds without OpenSSL broker TLS.
+  A trust setting that libcurl cannot apply now fails the token request.
+  This includes `https.ca.location=probe`, the macOS default, with a
+  libcurl that does not use OpenSSL (#5693).
 * Fix the bundled zlib being built without optimisation, which slowed down
   gzip compression in self-contained builds. Happening since 1.4.0 (#5673).
 
