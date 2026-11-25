@@ -20,6 +20,9 @@ SRCS_$(WITH_ZLIB) += rdgz.c
 SRCS_$(WITH_ZSTD) += rdkafka_zstd.c
 SRCS_$(WITH_HDRHISTOGRAM) += rdhdrhistogram.c
 SRCS_$(WITH_SSL) += rdkafka_ssl.c
+SRCS_$(WITH_SCHANNEL) += rdkafka_schannel.c
+SRCS_$(WITH_CRYPTO_OPENSSL) += rdkafka_crypto_openssl.c
+SRCS_$(WITH_CRYPTO_BCRYPT) += rdkafka_crypto_bcrypt.c
 SRCS_$(WITH_CURL) += rdhttp.c
 SRCS_$(WITH_OAUTHBEARER_OIDC) += rdkafka_sasl_oauthbearer_oidc.c
 
@@ -39,7 +42,7 @@ endif
 
 SRCS=		rdkafka.c rdkafka_broker.c rdkafka_msg.c rdkafka_topic.c \
 		rdkafka_conf.c rdkafka_timer.c rdkafka_offset.c \
-		rdkafka_transport.c rdkafka_buf.c rdkafka_queue.c rdkafka_op.c \
+		rdkafka_transport.c rdkafka_tls.c rdkafka_crypto.c rdkafka_buf.c rdkafka_queue.c rdkafka_op.c \
 		rdkafka_request.c rdkafka_cgrp.c rdkafka_pattern.c \
 		rdkafka_partition.c rdkafka_share_acknowledgement.c \
 		rdkafka_subscription.c \

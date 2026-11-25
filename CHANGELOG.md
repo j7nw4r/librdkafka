@@ -1,9 +1,44 @@
 # librdkafka v2.x.x (Unreleased)
 
+## Enhancements
+
+* Broker TLS and authentication crypto (SASL SCRAM, OAUTHBEARER/OIDC JWT
+  signing, SCRAM credential upserts) are now separate build choices.
+  New CMake options `RDKAFKA_TLS_BACKEND` and `RDKAFKA_CRYPTO_BACKEND`, and
+  configure options `--with-tls-backend` and `--with-crypto-backend`, select
+  them. OpenSSL stays the default for both (#5693).
+* New Windows backends: Schannel for broker TLS and BCrypt/NCrypt for
+  authentication crypto. With them, a Windows build uses the Windows CNG
+  modules and does not link OpenSSL. See the *TLS and crypto backends*
+  section of INTRODUCTION.md for the limits of Schannel builds (#5693).
+* New configuration property `ssl.certificate.store` selects the client
+  certificate and key from the Windows My store in Schannel builds (#5693).
+* New configuration property `https.revocation.check` controls the
+  certificate revocation check of OIDC HTTPS requests through libcurl with
+  Schannel (#5693).
+* New `builtin.features` flags `tls_openssl`, `tls_schannel`, `auth_crypto`,
+  `auth_crypto_openssl` and `auth_crypto_bcrypt` (#5693).
+
+
 ## Fixes
 
 ### General fixes
 
+* OAUTHBEARER/OIDC: ES256 JWT assertions carried a DER-encoded signature.
+  They now carry the 64-byte `R || S` form that RFC 7518 section 3.4
+  requires (#5693).
+* Windows: SASL GSSAPI in MSVC CMake builds called the ANSI SSPI functions
+  with a wide service principal name and failed with
+  "Target unknown (0x80090303)". The client now calls the wide functions
+  (#5693).
+* Windows: CMake builds with `WITH_CURL=ON` did not enable OIDC support
+  (#5693).
+* Windows: `rd_file_stat()` did not report directories, because the 8-bit
+  `rd_bool_t` truncated the `S_IFDIR` flag to zero (#5693).
+* At client termination, the client now closes a broker connection when it
+  fails a partially sent request on that connection. Timeout, purge and
+  termination also count a request as partially sent when the TLS layer
+  holds part of it and the request offset is still zero (#5693).
 * Fix the bundled zlib being built without optimisation, which slowed down
   gzip compression in self-contained builds. Happening since 1.4.0 (#5673).
 

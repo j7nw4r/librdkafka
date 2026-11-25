@@ -719,8 +719,10 @@ int main_0004_conf(int argc, char **argv) {
                 TEST_SAY("rd_kafka_new() failed as expected: %s\n", errstr);
                 rd_kafka_conf_destroy(conf);
         }
+#endif /* WITH_SSL */
 
-#if WITH_OAUTHBEARER_OIDC
+        /* The library checks https.ca.* only in builds with broker TLS. */
+#if WITH_TLS && WITH_OAUTHBEARER_OIDC
         {
                 TEST_SAY(
                     "Verify that https.ca.location is mutually "
@@ -785,11 +787,11 @@ int main_0004_conf(int argc, char **argv) {
 
                 rd_kafka_destroy(rk);
         }
-#endif /* WITH_OAUTHBEARER_OIDC */
+#endif /* WITH_TLS && WITH_OAUTHBEARER_OIDC */
 
         /* Verify that OpenSSL_AppLink is not needed on Windows (#3554) */
 
-#ifdef _WIN32
+#if WITH_SSL && defined(_WIN32)
         {
                 FILE *fp;
                 TEST_SAY(
@@ -830,9 +832,114 @@ int main_0004_conf(int argc, char **argv) {
 
                 TEST_SAY("rd_kafka_new() failed as expected: %s\n", errstr);
         }
-#endif /* _WIN32 */
+#endif /* WITH_SSL && _WIN32 */
 
-#endif /* WITH_SSL */
+#if WITH_SCHANNEL
+        {
+                /* OpenSSL-only properties fail at conf_set() in Schannel
+                 * builds, all with the same message. */
+                static const char *openssl_only[][2] = {
+                    {"ssl.cipher.suites", "ECDHE-RSA-AES128-GCM-SHA256"},
+                    {"ssl.curves.list", "P-256"},
+                    {"ssl.sigalgs.list", "RSA-PSS+SHA256"},
+                    {"ssl.key.password", "secret"},
+                    {"ssl.crl.location", "crl.pem"},
+                    {"ssl.providers", "default"},
+                    {"ssl.engine.id", "dynamic"},
+                    {NULL, NULL}};
+                for (i = 0; openssl_only[i][0]; i++) {
+                        conf = rd_kafka_conf_new();
+                        TEST_ASSERT(rd_kafka_conf_set(conf, openssl_only[i][0],
+                                                      openssl_only[i][1],
+                                                      errstr, sizeof(errstr)) ==
+                                            RD_KAFKA_CONF_INVALID &&
+                                        strstr(errstr,
+                                               "OpenSSL-only; this build "
+                                               "uses Schannel TLS"),
+                                    "%s: expected OpenSSL-only rejection, "
+                                    "got \"%s\"",
+                                    openssl_only[i][0], errstr);
+                        rd_kafka_conf_destroy(conf);
+                }
+
+                conf = rd_kafka_conf_new();
+                TEST_ASSERT(rd_kafka_conf_set(
+                                conf, "ssl.endpoint.identification.algorithm",
+                                "none", errstr,
+                                sizeof(errstr)) == RD_KAFKA_CONF_INVALID &&
+                                strstr(errstr, "always verifies"),
+                            "endpoint none: %s", errstr);
+                rd_kafka_conf_destroy(conf);
+
+                conf = rd_kafka_conf_new();
+                test_conf_set(conf, "security.protocol", "SSL");
+                test_conf_set(conf, "ssl.ca.certificate.stores", "root");
+                rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr,
+                                  sizeof(errstr));
+                TEST_ASSERT(rk, "ssl.ca.certificate.stores=Root: %s", errstr);
+                rd_kafka_destroy(rk);
+
+                conf = rd_kafka_conf_new();
+                test_conf_set(conf, "security.protocol", "SSL");
+                test_conf_set(conf, "ssl.ca.certificate.stores", "CA");
+                rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr,
+                                  sizeof(errstr));
+                TEST_ASSERT(!rk && strstr(errstr, "only Root"),
+                            "ssl.ca.certificate.stores=CA: %s", errstr);
+                rd_kafka_conf_destroy(conf);
+
+                conf = rd_kafka_conf_new();
+                test_conf_set(conf, "security.protocol", "SSL");
+                test_conf_set(conf, "enable.ssl.certificate.verification",
+                              "false");
+                rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr,
+                                  sizeof(errstr));
+                TEST_ASSERT(!rk && strstr(errstr,
+                                          "enable.ssl.certificate."
+                                          "verification=false"),
+                            "verification off: %s", errstr);
+                rd_kafka_conf_destroy(conf);
+
+                conf = rd_kafka_conf_new();
+                test_conf_set(conf, "security.protocol", "SSL");
+                test_conf_set(conf, "ssl.ca.location", ".");
+                rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr,
+                                  sizeof(errstr));
+                TEST_ASSERT(!rk && strstr(errstr, "ssl.ca.location") &&
+                                strstr(errstr, "is a directory"),
+                            "CA directory: %s", errstr);
+                rd_kafka_conf_destroy(conf);
+        }
+#endif /* WITH_SCHANNEL */
+
+#if WITH_OAUTHBEARER_OIDC
+        {
+                TEST_ASSERT(test_check_builtin("http") &&
+                                test_check_builtin("oidc"),
+                            "OIDC build must report http and oidc in "
+                            "builtin.features");
+                conf = rd_kafka_conf_new();
+                TEST_ASSERT(rd_kafka_conf_set(conf, "https.revocation.check",
+                                              "strict", errstr,
+                                              sizeof(errstr)) ==
+                                RD_KAFKA_CONF_INVALID,
+                            "unknown https.revocation.check value accepted");
+                test_conf_set(conf, "https.revocation.check", "none");
+                rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr,
+                                  sizeof(errstr));
+                if (rk)
+                        rd_kafka_destroy(rk);
+                else {
+                        /* Only libcurl with Schannel supports it. */
+                        TEST_ASSERT(strstr(errstr, "https.revocation.check") &&
+                                        strstr(errstr, "Schannel"),
+                                    "https.revocation.check=none: %s", errstr);
+                        TEST_SAY("https.revocation.check=none refused: %s\n",
+                                 errstr);
+                        rd_kafka_conf_destroy(conf);
+                }
+        }
+#endif /* WITH_OAUTHBEARER_OIDC */
 
         /* Canonical int values, aliases, s2i-verified strings, doubles */
         {

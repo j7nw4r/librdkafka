@@ -31,6 +31,18 @@
 
 #include "../src/rd.h"
 
+/* Authentication crypto (SCRAM PBKDF2, JWT) is separate from broker TLS.
+ * Match the library defaults for configurations that predate these flags. */
+#ifndef WITH_CRYPTO
+#define WITH_CRYPTO WITH_SSL
+#endif
+#ifndef WITH_SCHANNEL
+#define WITH_SCHANNEL 0
+#endif
+#ifndef WITH_TLS
+#define WITH_TLS (WITH_SSL || WITH_SCHANNEL)
+#endif
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>

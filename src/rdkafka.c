@@ -61,11 +61,12 @@
 #if WITH_OAUTHBEARER_OIDC
 #include "rdkafka_sasl_oauthbearer_oidc.h"
 #endif
-#if WITH_SSL
-#include "rdkafka_ssl.h"
+#if WITH_TLS
+#include "rdkafka_tls.h"
 #endif
 
 #include "rdtime.h"
+#include "rdkafka_crypto.h"
 #include "rdmap.h"
 #include "crc32c.h"
 #include "rdunittest.h"
@@ -188,12 +189,13 @@ static void rd_kafka_global_init0(void) {
         rd_atomic32_init(&rd_kafka_op_cnt, 0);
 #endif
         rd_crc32c_global_init();
-#if WITH_SSL
+#if WITH_TLS
         /* The configuration interface might need to use
          * OpenSSL to parse keys, prior to any rd_kafka_t
          * object has been created. */
-        rd_kafka_ssl_init();
+        rd_kafka_tls_init();
 #endif
+        rd_kafka_crypto_init();
 
         cJSON_InitHooks(&json_hooks);
 
@@ -231,9 +233,10 @@ static void rd_kafka_global_cnt_incr(void) {
         rd_kafka_global_cnt++;
         if (rd_kafka_global_cnt == 1) {
                 rd_kafka_transport_init();
-#if WITH_SSL
-                rd_kafka_ssl_init();
+#if WITH_TLS
+                rd_kafka_tls_init();
 #endif
+                rd_kafka_crypto_init();
                 rd_kafka_sasl_global_init();
         }
         mtx_unlock(&rd_kafka_global_lock);
@@ -249,8 +252,9 @@ static void rd_kafka_global_cnt_decr(void) {
         rd_kafka_global_cnt--;
         if (rd_kafka_global_cnt == 0) {
                 rd_kafka_sasl_global_term();
-#if WITH_SSL
-                rd_kafka_ssl_term();
+                rd_kafka_crypto_term();
+#if WITH_TLS
+                rd_kafka_tls_term();
 #endif
         }
         mtx_unlock(&rd_kafka_global_lock);
@@ -1096,11 +1100,8 @@ void rd_kafka_destroy_final(rd_kafka_t *rk) {
         rd_kafka_q_destroy_owner(rk->rk_rep);
         rd_kafka_q_destroy_owner(rk->rk_ops);
 
-#if WITH_SSL
-        if (rk->rk_conf.ssl.ctx) {
-                rd_kafka_dbg(rk, GENERIC, "TERMINATE", "Destroying SSL CTX");
-                rd_kafka_ssl_ctx_term(rk);
-        }
+#if WITH_TLS
+        rd_kafka_tls_ctx_term(rk);
         rd_list_destroy(&rk->rk_conf.ssl.loaded_providers);
 #endif
 
@@ -2545,6 +2546,7 @@ static int rd_kafka_thread_main(void *arg) {
         rd_kafka_wrlock(rk);
         rd_kafka_wrunlock(rk);
 
+        rd_kafka_crypto_thread_term();
         rd_kafka_interceptors_on_thread_exit(rk, RD_KAFKA_THREAD_MAIN);
 
         rd_kafka_destroy_internal(rk);
@@ -2576,7 +2578,7 @@ rd_kafka_t *rd_kafka_new(rd_kafka_type_t type,
 #ifndef _WIN32
         sigset_t newset, oldset;
 #endif
-        char builtin_features[128];
+        char builtin_features[256];
         size_t bflen;
 
         rd_kafka_global_init();
@@ -2859,11 +2861,11 @@ rd_kafka_t *rd_kafka_new(rd_kafka_type_t type,
                 }
         }
 
-#if WITH_SSL
+#if WITH_TLS
         if (rk->rk_conf.security_protocol == RD_KAFKA_PROTO_SSL ||
             rk->rk_conf.security_protocol == RD_KAFKA_PROTO_SASL_SSL) {
                 /* Create SSL context */
-                if (rd_kafka_ssl_ctx_init(rk, errstr, errstr_size) == -1) {
+                if (rd_kafka_tls_ctx_init(rk, errstr, errstr_size) == -1) {
                         ret_err   = RD_KAFKA_RESP_ERR__INVALID_ARG;
                         ret_errno = EINVAL;
                         goto fail;

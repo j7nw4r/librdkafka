@@ -52,6 +52,22 @@ typedef int mode_t;
 #include "rdavg.h"
 #include "rdlist.h"
 
+#ifndef WITH_SCHANNEL
+#define WITH_SCHANNEL 0
+#endif
+#ifndef WITH_TLS
+#define WITH_TLS (WITH_SSL || WITH_SCHANNEL)
+#endif
+#ifndef WITH_CRYPTO_OPENSSL
+#define WITH_CRYPTO_OPENSSL WITH_SSL
+#endif
+#ifndef WITH_CRYPTO_BCRYPT
+#define WITH_CRYPTO_BCRYPT 0
+#endif
+#ifndef WITH_CRYPTO
+#define WITH_CRYPTO (WITH_CRYPTO_OPENSSL || WITH_CRYPTO_BCRYPT)
+#endif
+
 #if WITH_SSL
 #include <openssl/ssl.h>
 #endif

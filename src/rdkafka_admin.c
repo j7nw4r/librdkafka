@@ -32,6 +32,7 @@
 #include "rdkafka_request.h"
 #include "rdkafka_aux.h"
 #include "rdunittest.h"
+#include "rdkafka_crypto.h"
 
 #include <stdarg.h>
 
@@ -6189,7 +6190,7 @@ rd_kafka_AlterUserScramCredentials_result_responses(
 }
 
 
-#if WITH_SSL
+#if WITH_CRYPTO
 static rd_kafkap_bytes_t *
 rd_kafka_AlterUserScramCredentialsRequest_salted_password(
     rd_kafka_broker_t *rkb,
@@ -6197,8 +6198,8 @@ rd_kafka_AlterUserScramCredentialsRequest_salted_password(
     rd_kafkap_bytes_t *password,
     rd_kafka_ScramMechanism_t mechanism,
     int32_t iterations) {
-        rd_chariov_t saltedpassword_chariov = {.ptr =
-                                                   rd_alloca(EVP_MAX_MD_SIZE)};
+        rd_chariov_t saltedpassword_chariov = {
+            .ptr = rd_alloca(RD_KAFKA_CRYPTO_MAX_DIGEST_SIZE)};
 
         rd_chariov_t salt_chariov;
         salt_chariov.ptr  = (char *)salt->data;
@@ -6208,15 +6209,22 @@ rd_kafka_AlterUserScramCredentialsRequest_salted_password(
         password_chariov.ptr  = (char *)password->data;
         password_chariov.size = RD_KAFKAP_BYTES_LEN(password);
 
-        const EVP_MD *evp = NULL;
+        rd_kafka_crypto_hash_t hash;
+        (void)rkb;
         if (mechanism == RD_KAFKA_SCRAM_MECHANISM_SHA_256)
-                evp = EVP_sha256();
+                hash = RD_KAFKA_CRYPTO_SHA256;
         else if (mechanism == RD_KAFKA_SCRAM_MECHANISM_SHA_512)
-                evp = EVP_sha512();
-        rd_assert(evp != NULL);
-
-        rd_kafka_ssl_hmac(rkb, evp, &password_chariov, &salt_chariov,
-                          iterations, &saltedpassword_chariov);
+                hash = RD_KAFKA_CRYPTO_SHA512;
+        else
+                return NULL;
+        saltedpassword_chariov.size = rd_kafka_crypto_digest_size(hash);
+        if (iterations <= 0 ||
+            rd_kafka_crypto_pbkdf2(hash, password_chariov.ptr,
+                                   password_chariov.size, salt_chariov.ptr,
+                                   salt_chariov.size, (uint64_t)iterations,
+                                   (unsigned char *)saltedpassword_chariov.ptr,
+                                   saltedpassword_chariov.size))
+                return NULL;
 
         return rd_kafkap_bytes_new(
             (const unsigned char *)saltedpassword_chariov.ptr,
@@ -6291,8 +6299,8 @@ rd_kafka_resp_err_t rd_kafka_AlterUserScramCredentialsRequest(
                     RD_KAFKA_USER_SCRAM_CREDENTIAL_ALTERATION_TYPE_UPSERT)
                         continue;
 
-#if !WITH_SSL
-                rd_assert(!*"OpenSSL is required for upsertions");
+#if !WITH_CRYPTO
+                rd_assert(!*"Crypto backend is required for upsertions");
 #else
                 char *user      = alteration->user;
                 size_t usersize = strlen(user);
@@ -6319,6 +6327,12 @@ rd_kafka_resp_err_t rd_kafka_AlterUserScramCredentialsRequest(
                         alteration->alteration.upsertion.password, mechanism,
                         iterations);
 
+                if (!password_bytes) {
+                        rd_kafka_buf_destroy(rkbuf);
+                        rd_snprintf(errstr, errstr_size,
+                                    "SCRAM password derivation failed");
+                        return RD_KAFKA_RESP_ERR__FAIL;
+                }
                 /* SaltedPassword */
                 rd_kafka_buf_write_kbytes(rkbuf, password_bytes);
                 rd_kafkap_bytes_destroy(password_bytes);
@@ -6441,9 +6455,10 @@ void rd_kafka_AlterUserScramCredentials(
                         }
 
                         if (is_upsert) {
-#if !WITH_SSL
+#if !WITH_CRYPTO
                                 errstr =
-                                    "OpenSSL required for upsertion at index "
+                                    "Crypto backend required for upsertion at "
+                                    "index "
                                     "%" PRIusz;
                                 break;
 #endif

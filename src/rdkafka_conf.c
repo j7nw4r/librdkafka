@@ -58,6 +58,7 @@
 
 #if WITH_OAUTHBEARER_OIDC
 #include <curl/curl.h>
+#include "rdhttp.h"
 #endif
 
 struct rd_kafka_property {
@@ -133,23 +134,48 @@ struct rd_kafka_property {
 #define _RK(field)  offsetof(rd_kafka_conf_t, field)
 #define _RKT(field) offsetof(rd_kafka_topic_conf_t, field)
 
-#if WITH_SSL
+#if WITH_TLS
 #define _UNSUPPORTED_SSL .unsupported = NULL
 #else
-#define _UNSUPPORTED_SSL .unsupported = "OpenSSL not available at build time"
+#define _UNSUPPORTED_SSL                                                       \
+        .unsupported = "TLS backend not available at build time"
 #endif
 
-#if OPENSSL_VERSION_NUMBER >= 0x1000200fL && defined(WITH_SSL) &&              \
+/* OpenSSL-only broker TLS properties: another TLS backend refuses them at
+ * rd_kafka_conf_set() with one message, before any version requirement. */
+#if WITH_SSL
+#define _UNSUPPORTED_OPENSSL .unsupported = NULL
+#elif WITH_SCHANNEL
+#define _UNSUPPORTED_OPENSSL                                                   \
+        .unsupported = "OpenSSL-only; this build uses Schannel TLS"
+#else
+#define _UNSUPPORTED_OPENSSL _UNSUPPORTED_SSL
+#endif
+
+#if OPENSSL_VERSION_NUMBER >= 0x1000200fL && WITH_SSL &&                       \
     !defined(LIBRESSL_VERSION_NUMBER)
 #define _UNSUPPORTED_OPENSSL_1_0_2 .unsupported = NULL
+#elif !WITH_SSL
+#define _UNSUPPORTED_OPENSSL_1_0_2 _UNSUPPORTED_OPENSSL
 #else
 #define _UNSUPPORTED_OPENSSL_1_0_2                                             \
         .unsupported = "OpenSSL >= 1.0.2 not available at build time"
 #endif
 
-#if OPENSSL_VERSION_NUMBER >= 0x10100000 && defined(WITH_SSL) &&               \
+#if WITH_SCHANNEL
+#define _UNSUPPORTED_ENDPOINT_ID .unsupported = NULL
+#define _UNSUPPORTED_ENDPOINT_ID_NONE                                          \
+        .unsupported = "Schannel always verifies the broker hostname"
+#else
+#define _UNSUPPORTED_ENDPOINT_ID      _UNSUPPORTED_OPENSSL_1_0_2
+#define _UNSUPPORTED_ENDPOINT_ID_NONE .unsupported = NULL
+#endif
+
+#if OPENSSL_VERSION_NUMBER >= 0x10100000 && WITH_SSL &&                        \
     !defined(LIBRESSL_VERSION_NUMBER)
 #define _UNSUPPORTED_OPENSSL_1_1_0 .unsupported = NULL
+#elif !WITH_SSL
+#define _UNSUPPORTED_OPENSSL_1_1_0 _UNSUPPORTED_OPENSSL
 #else
 #define _UNSUPPORTED_OPENSSL_1_1_0                                             \
         .unsupported = "OpenSSL >= 1.1.0 not available at build time"
@@ -157,13 +183,17 @@ struct rd_kafka_property {
 
 #if WITH_SSL_ENGINE
 #define _UNSUPPORTED_SSL_ENGINE .unsupported = NULL
+#elif !WITH_SSL
+#define _UNSUPPORTED_SSL_ENGINE _UNSUPPORTED_OPENSSL
 #else
 #define _UNSUPPORTED_SSL_ENGINE                                                \
         .unsupported = "OpenSSL >= 1.1.x not available at build time"
 #endif
 
-#if OPENSSL_VERSION_NUMBER >= 0x30000000 && defined(WITH_SSL)
+#if OPENSSL_VERSION_NUMBER >= 0x30000000 && WITH_SSL
 #define _UNSUPPORTED_SSL_3 .unsupported = NULL
+#elif !WITH_SSL
+#define _UNSUPPORTED_SSL_3 _UNSUPPORTED_OPENSSL
 #else
 #define _UNSUPPORTED_SSL_3                                                     \
         .unsupported = "OpenSSL >= 3.0.0 not available at build time"
@@ -199,7 +229,7 @@ struct rd_kafka_property {
 #else
 #define _UNSUPPORTED_OIDC                                                      \
         .unsupported =                                                         \
-            "OAuth/OIDC depends on libcurl and OpenSSL which were not "        \
+            "OAuth/OIDC depends on libcurl and authentication crypto not "     \
             "available at build time"
 #endif
 
@@ -208,8 +238,8 @@ struct rd_kafka_property {
 #else
 #define _UNSUPPORTED_HTTPS                                                     \
         .unsupported =                                                         \
-            "HTTPS calls depend on libcurl and OpenSSL which were not "        \
-            "available at build time"
+            "HTTPS support with libcurl and authentication crypto was not "    \
+            "enabled at build time"
 #endif
 
 #ifdef _WIN32
@@ -229,7 +259,18 @@ struct rd_kafka_property {
         .unsupported = "cyrus-sasl/libsasl2 not available at build time"
 #endif
 
-#define _UNSUPPORTED_OAUTHBEARER _UNSUPPORTED_SSL
+#if WITH_SASL_SCRAM
+#define _UNSUPPORTED_SCRAM .unsupported = NULL
+#else
+#define _UNSUPPORTED_SCRAM                                                     \
+        .unsupported = "SCRAM crypto backend not available at build time"
+#endif
+#if WITH_SASL_OAUTHBEARER
+#define _UNSUPPORTED_OAUTHBEARER .unsupported = NULL
+#else
+#define _UNSUPPORTED_OAUTHBEARER                                               \
+        .unsupported = "OAuth bearer support not available at build time"
+#endif
 
 
 static rd_kafka_conf_res_t
@@ -376,8 +417,12 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
     {_RK_GLOBAL, "builtin.features", _RK_C_S2F, _RK(builtin_features),
      "Indicates the builtin features for this build of librdkafka. "
      "An application can either query this value or attempt to set it "
-     "with its list of required features to check for library support.",
-     0, 0x7fffffff, 0xffff,
+     "with its list of required features to check for library support. "
+     "`ssl` means broker TLS from any backend (`tls_openssl` or "
+     "`tls_schannel` name it). `auth_crypto` means authentication crypto "
+     "for SASL SCRAM, OAUTHBEARER/OIDC JWT signing and SCRAM credential "
+     "upserts (`auth_crypto_openssl` or `auth_crypto_bcrypt` name it).",
+     0, 0x7fffffff, 0x7ffff,
      .s2i = {{0x1, "gzip", _UNSUPPORTED_ZLIB},
              {0x2, "snappy", _UNSUPPORTED_SNAPPY},
              {0x4, "ssl", _UNSUPPORTED_SSL},
@@ -386,7 +431,7 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
              {0x20, "lz4"},
              {0x40, "sasl_gssapi", _UNSUPPORTED_GSSAPI},
              {0x80, "sasl_plain"},
-             {0x100, "sasl_scram", _UNSUPPORTED_SSL},
+             {0x100, "sasl_scram", _UNSUPPORTED_SCRAM},
              {0x200, "plugins"
 #if !WITH_PLUGINS
               ,
@@ -395,9 +440,39 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
 #endif
              },
              {0x400, "zstd", _UNSUPPORTED_ZSTD},
-             {0x800, "sasl_oauthbearer", _UNSUPPORTED_SSL},
+             {0x800, "sasl_oauthbearer", _UNSUPPORTED_OAUTHBEARER},
              {0x1000, "http", _UNSUPPORTED_HTTP},
              {0x2000, "oidc", _UNSUPPORTED_OIDC},
+             {0x4000, "tls_openssl"
+#if !WITH_SSL
+              ,
+              .unsupported = "OpenSSL TLS backend not available"
+#endif
+             },
+             {0x8000, "tls_schannel"
+#if !WITH_SCHANNEL
+              ,
+              .unsupported = "Schannel TLS backend not available"
+#endif
+             },
+             {0x10000, "auth_crypto_openssl"
+#if !WITH_CRYPTO_OPENSSL
+              ,
+              .unsupported = "OpenSSL authentication crypto not available"
+#endif
+             },
+             {0x20000, "auth_crypto_bcrypt"
+#if !WITH_CRYPTO_BCRYPT
+              ,
+              .unsupported = "BCrypt authentication crypto not available"
+#endif
+             },
+             {0x40000, "auth_crypto"
+#if !WITH_CRYPTO
+              ,
+              .unsupported = "Authentication crypto backend not available"
+#endif
+             },
              {0, NULL}}},
     {_RK_GLOBAL, "client.id", _RK_C_STR, _RK(client_id_str),
      "Client identifier.", .sdef = "rdkafka"},
@@ -842,29 +917,35 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
      "encryption, MAC and key exchange algorithm used to negotiate the "
      "security settings for a network connection using TLS or SSL network "
      "protocol. See manual page for `ciphers(1)` and "
-     "`SSL_CTX_set_cipher_list(3).",
-     _UNSUPPORTED_SSL},
+     "`SSL_CTX_set_cipher_list(3). OpenSSL only: Schannel builds refuse it "
+     "and use the Windows cipher suite policy.",
+     _UNSUPPORTED_OPENSSL},
     {_RK_GLOBAL, "ssl.curves.list", _RK_C_STR, _RK(ssl.curves_list),
      "The supported-curves extension in the TLS ClientHello message specifies "
      "the curves (standard/named, or 'explicit' GF(2^k) or GF(p)) the client "
      "is willing to have the server use. See manual page for "
-     "`SSL_CTX_set1_curves_list(3)`. OpenSSL >= 1.0.2 required.",
+     "`SSL_CTX_set1_curves_list(3)`. OpenSSL >= 1.0.2 required; Schannel "
+     "builds refuse it.",
      _UNSUPPORTED_OPENSSL_1_0_2},
     {_RK_GLOBAL, "ssl.sigalgs.list", _RK_C_STR, _RK(ssl.sigalgs_list),
      "The client uses the TLS ClientHello signature_algorithms extension "
      "to indicate to the server which signature/hash algorithm pairs "
      "may be used in digital signatures. See manual page for "
-     "`SSL_CTX_set1_sigalgs_list(3)`. OpenSSL >= 1.0.2 required.",
+     "`SSL_CTX_set1_sigalgs_list(3)`. OpenSSL >= 1.0.2 required; Schannel "
+     "builds refuse it.",
      _UNSUPPORTED_OPENSSL_1_0_2},
     {_RK_GLOBAL | _RK_SENSITIVE, "ssl.key.location", _RK_C_STR,
      _RK(ssl.key_location),
-     "Path to client's private key (PEM) used for authentication.",
+     "Path to client's private key (PEM) used for authentication. "
+     "Schannel builds need an unencrypted PKCS#8 key.",
      _UNSUPPORTED_SSL},
     {_RK_GLOBAL | _RK_SENSITIVE, "ssl.key.password", _RK_C_STR,
      _RK(ssl.key_password),
      "Private key passphrase (for use with `ssl.key.location` "
-     "and `set_ssl_cert()`)",
-     _UNSUPPORTED_SSL},
+     "and `set_ssl_cert()`). OpenSSL only: Schannel builds refuse it and "
+     "need an unencrypted PKCS#8 key, a PKCS#12 keystore or "
+     "`ssl.certificate.store`.",
+     _UNSUPPORTED_OPENSSL},
     {_RK_GLOBAL | _RK_SENSITIVE, "ssl.key.pem", _RK_C_STR, _RK(ssl.key_pem),
      "Client's private key string (PEM format) used for authentication.",
      _UNSUPPORTED_SSL},
@@ -878,6 +959,21 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
     {_RK_GLOBAL, "ssl.certificate.pem", _RK_C_STR, _RK(ssl.cert_pem),
      "Client's public key string (PEM format) used for authentication.",
      _UNSUPPORTED_SSL},
+    {_RK_GLOBAL, "ssl.certificate.store", _RK_C_STR, _RK(ssl.cert_store),
+     "Client identity in a Windows certificate store, used read-only. "
+     "Use CurrentUser/My/THUMBPRINT or LocalMachine/My/THUMBPRINT, where "
+     "THUMBPRINT is the 40 hexadecimal digit SHA-1 certificate identifier. "
+     "Separators may be `/` or `\\`; case, spaces, invisible marks copied "
+     "from the certificate manager and a `Cert:\\` prefix are accepted. "
+     "The certificate must already have an accessible private key. "
+     "Mutually exclusive with certificate, key and keystore inputs. "
+     "The client does not import or persist this identity. "
+     "Currently supported only by the Schannel TLS backend.",
+#if !WITH_SCHANNEL
+     .unsupported = "Windows certificate store identities need the Schannel "
+                    "TLS backend, which this build does not use"
+#endif
+    },
     {_RK_GLOBAL, "ssl_certificate", _RK_C_INTERNAL, _RK(ssl.key),
      "Client's public key as set by rd_kafka_conf_set_ssl_cert()",
      .dtor = rd_kafka_conf_cert_dtor, .copy = rd_kafka_conf_cert_copy,
@@ -897,7 +993,9 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
      "`probe` a list of standard paths will be probed and the first one "
      "found will be used as the default CA certificate location path. "
      "If OpenSSL is dynamically linked the OpenSSL library's default "
-     "path will be used (see `OPENSSLDIR` in `openssl version -a`).",
+     "path will be used (see `OPENSSLDIR` in `openssl version -a`). "
+     "Schannel builds need a PEM file: directories and `probe` are refused, "
+     "and an unset value uses the Windows Root store.",
      _UNSUPPORTED_SSL},
     {_RK_GLOBAL, "https.ca.location", _RK_C_STR, _RK(https.ca_location),
      "File or directory path to CA certificate(s) for verifying "
@@ -922,6 +1020,23 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
      "Mutually exclusive with `https.ca.location`. "
      "Optional: see `https.ca.location`.",
      _UNSUPPORTED_HTTPS},
+    {_RK_GLOBAL, "https.revocation.check", _RK_C_S2I,
+     _RK(https.revocation_check),
+     "Certificate revocation checking for HTTPS endpoints, like "
+     "`sasl.oauthbearer.token.endpoint.url`. "
+     "`default` keeps the behavior of the libcurl TLS backend: the Schannel "
+     "backend checks revocation and fails when the status is unknown (for "
+     "example a private CA without a reachable CRL), and OpenSSL-based "
+     "backends do not check revocation. "
+     "`best_effort` ignores missing or offline revocation information. "
+     "`none` disables revocation checks. `best_effort` and `none` need "
+     "libcurl with the Schannel TLS backend (and libcurl >= 7.70.0 for "
+     "`best_effort`); with another backend client creation fails.",
+     .vdef = RD_KAFKA_HTTPS_REVOCATION_DEFAULT,
+     .s2i  = {{RD_KAFKA_HTTPS_REVOCATION_DEFAULT, "default"},
+              {RD_KAFKA_HTTPS_REVOCATION_BEST_EFFORT, "best_effort"},
+              {RD_KAFKA_HTTPS_REVOCATION_NONE, "none"}},
+     _UNSUPPORTED_HTTPS},
     {_RK_GLOBAL | _RK_SENSITIVE, "ssl.ca.pem", _RK_C_STR, _RK(ssl.ca_pem),
      "CA certificate string (PEM format) for verifying the broker's key.",
      _UNSUPPORTED_SSL},
@@ -936,7 +1051,8 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
      "order as stores are specified. If no certificates can be loaded "
      "from any of the specified stores an error is logged and the "
      "OpenSSL library's default CA location is used instead. "
-     "Store names are typically one or more of: MY, Root, Trust, CA.",
+     "Store names are typically one or more of: MY, Root, Trust, CA. "
+     "Schannel builds accept only `Root` (system trust, the default).",
      .sdef = "Root",
 #if !defined(_WIN32)
      .unsupported = "configuration only valid on Windows"
@@ -944,17 +1060,20 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
     },
 
     {_RK_GLOBAL, "ssl.crl.location", _RK_C_STR, _RK(ssl.crl_location),
-     "Path to CRL for verifying broker's certificate validity.",
-     _UNSUPPORTED_SSL},
+     "Path to CRL for verifying broker's certificate validity. "
+     "OpenSSL only: Schannel builds refuse it.",
+     _UNSUPPORTED_OPENSSL},
     {_RK_GLOBAL, "ssl.keystore.location", _RK_C_STR, _RK(ssl.keystore_location),
-     "Path to client's keystore (PKCS#12) used for authentication.",
+     "Path to client's keystore (PKCS#12) used for authentication. "
+     "Schannel imports it without persisting the key; some PKCS#12 keys "
+     "cannot be used that way, in which case use `ssl.certificate.store`.",
      _UNSUPPORTED_SSL},
     {_RK_GLOBAL | _RK_SENSITIVE, "ssl.keystore.password", _RK_C_STR,
      _RK(ssl.keystore_password), "Client's keystore (PKCS#12) password.",
      _UNSUPPORTED_SSL},
     {_RK_GLOBAL, "ssl.providers", _RK_C_STR, _RK(ssl.providers),
      "Comma-separated list of OpenSSL 3.0.x implementation providers. "
-     "E.g., \"default,legacy\".",
+     "E.g., \"default,legacy\". OpenSSL only.",
      _UNSUPPORTED_SSL_3},
     {_RK_GLOBAL | _RK_DEPRECATED, "ssl.engine.location", _RK_C_STR,
      _RK(ssl.engine_location),
@@ -963,7 +1082,7 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
      "replaced by OpenSSL 3 providers.",
      _UNSUPPORTED_SSL_ENGINE},
     {_RK_GLOBAL, "ssl.engine.id", _RK_C_STR, _RK(ssl.engine_id),
-     "OpenSSL engine id is the name used for loading engine.",
+     "OpenSSL engine id is the name used for loading engine. OpenSSL only.",
      .sdef = "dynamic", _UNSUPPORTED_SSL_ENGINE},
     {_RK_GLOBAL, "ssl_engine_callback_data", _RK_C_PTR,
      _RK(ssl.engine_callback_data),
@@ -974,7 +1093,8 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
      _RK(ssl.enable_verify),
      "Enable OpenSSL's builtin broker (server) certificate verification. "
      "This verification can be extended by the application by "
-     "implementing a certificate_verify_cb.",
+     "implementing a certificate_verify_cb. Schannel builds always verify "
+     "and refuse `false` at client creation.",
      0, 1, 1, _UNSUPPORTED_SSL},
     {_RK_GLOBAL, "ssl.endpoint.identification.algorithm", _RK_C_S2I,
      _RK(ssl.endpoint_identification),
@@ -983,14 +1103,17 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
      "https - Server (broker) hostname verification as "
      "specified in RFC2818. "
      "none - No endpoint verification. "
-     "OpenSSL >= 1.0.2 required.",
+     "OpenSSL >= 1.0.2 required. Schannel builds always verify the "
+     "hostname and refuse `none`.",
      .vdef = RD_KAFKA_SSL_ENDPOINT_ID_HTTPS,
-     .s2i  = {{RD_KAFKA_SSL_ENDPOINT_ID_NONE, "none"},
+     .s2i  = {{RD_KAFKA_SSL_ENDPOINT_ID_NONE, "none",
+               _UNSUPPORTED_ENDPOINT_ID_NONE},
               {RD_KAFKA_SSL_ENDPOINT_ID_HTTPS, "https"}},
-     _UNSUPPORTED_OPENSSL_1_0_2},
+     _UNSUPPORTED_ENDPOINT_ID},
     {_RK_GLOBAL, "ssl.certificate.verify_cb", _RK_C_PTR,
      _RK(ssl.cert_verify_cb),
-     "Callback to verify the broker certificate chain.", _UNSUPPORTED_SSL},
+     "Callback to verify the broker certificate chain. OpenSSL only.",
+     _UNSUPPORTED_OPENSSL},
 
     /* Point user in the right direction if they try to apply
      * Java client SSL / JAAS properties. */
@@ -1956,7 +2079,8 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
      "This property is not supported for share consumers.",
      0, 1000000, 0},
 
-    {0, /* End */}};
+    {0,
+     /* End */}};
 
 /**
  * @returns the property object for \p name in \p scope, or NULL if not found.
@@ -4255,7 +4379,7 @@ const char *rd_kafka_conf_finalize(rd_kafka_type_t cltype,
         if (!conf->open_cb)
                 return "Mandatory config property `open_cb` not set";
 
-#if WITH_SSL
+#if WITH_TLS
         if (conf->ssl.keystore_location && !conf->ssl.keystore_password)
                 return "`ssl.keystore.password` is mandatory when "
                        "`ssl.keystore.location` is set";
@@ -4281,7 +4405,7 @@ const char *rd_kafka_conf_finalize(rd_kafka_type_t cltype,
 #endif
 
 
-#ifdef __APPLE__
+#if defined(__APPLE__) && WITH_SSL
         else if (!conf->ssl.ca && !conf->ssl.ca_location && !conf->ssl.ca_pem)
                 /* Default ssl.ca.location to 'probe' on OSX */
                 rd_kafka_conf_set(conf, "ssl.ca.location", "probe", NULL, 0);
@@ -4290,6 +4414,15 @@ const char *rd_kafka_conf_finalize(rd_kafka_type_t cltype,
         if (!conf->https.ca_location && !conf->https.ca_pem)
                 rd_kafka_conf_set(conf, "https.ca.location", "probe", NULL, 0);
 #endif
+#endif
+
+#if WITH_OAUTHBEARER_OIDC
+        {
+                const char *reason = rd_http_revocation_unsupported(
+                    conf->https.revocation_check);
+                if (reason)
+                        return reason;
+        }
 #endif
 
 #if WITH_SASL_OAUTHBEARER
@@ -5032,9 +5165,16 @@ int unittest_conf(void) {
                                 break;
 
                         case _RK_C_S2F:
-                        case _RK_C_S2I:
-                                val = prop->s2i[0].str;
+                        case _RK_C_S2I: {
+                                int j = 0;
+                                /* Use the first value this build supports. */
+                                while (prop->s2i[j].str &&
+                                       prop->s2i[j].unsupported)
+                                        j++;
+                                val = prop->s2i[j].str ? prop->s2i[j].str
+                                                       : prop->s2i[0].str;
                                 break;
+                        }
 
                         case _RK_C_PTR:
                         case _RK_C_ALIAS:

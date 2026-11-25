@@ -505,6 +505,18 @@ implemented as automatic tests.
 
 Check the output and follow the instructions.
 
+### Schannel transport
+
+This test runs the Schannel adapter against a real TLS 1.2 peer on Windows.
+It covers short reads and writes, retries, cancellation, client identities
+from the My store, and certificate rejection. It needs Python with the
+`cryptography` package and PowerShell 7 (`pwsh`), which adds and removes the
+test identities in `CurrentUser\My`.
+
+    $ cmake -S .. -B build -A x64 -DRDKAFKA_TLS_BACKEND=schannel -DRDKAFKA_CRYPTO_BACKEND=bcrypt -DRDKAFKA_BUILD_STATIC=ON -DRDKAFKA_BUILD_TESTS=ON
+    $ cmake --build build --config Release --target schannel-transport-test
+    $ python schannel_transport.py --client build/tests/Release/schannel-transport-test.exe
+
 
 
 

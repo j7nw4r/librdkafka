@@ -32,9 +32,7 @@
 #include "tinycthread.h"
 #include "rdmurmur2.h"
 
-#ifdef HAVE_OSSL_SECURE_RAND_BYTES
-#include <openssl/rand.h>
-#endif
+#include "rdkafka_crypto.h"
 #if HAVE_GETENTROPY
 /* getentropy() can be present in one of these two */
 #include <unistd.h>
@@ -74,20 +72,6 @@ static int rd_rand() {
         return rand_num;
 }
 
-#if HAVE_OSSL_SECURE_RAND_BYTES
-static rd_bool_t rd_rand_bytes_by_ossl(unsigned char *buf, int num) {
-        int res     = -1;
-        int retries = 0;
-        while ((res = RAND_priv_bytes(buf, num)) != 1) {
-                if (++retries == 5)
-                        break;
-
-                rd_usleep(1000, 0); /* wait for more entropy */
-        }
-        return res == 1;
-}
-#endif
-
 #ifdef _WIN32
 static rd_bool_t rd_rand_bytes_by_rand_s(unsigned char *buf, int num) {
         unsigned int rand, retries = 0;
@@ -112,19 +96,26 @@ static rd_bool_t rd_rand_bytes_by_rand_s(unsigned char *buf, int num) {
 #endif
 
 rd_bool_t rd_rand_bytes(unsigned char *buf, unsigned int num) {
-#if HAVE_OSSL_SECURE_RAND_BYTES
-        if (rd_rand_bytes_by_ossl(buf, num))
-                return rd_true;
-#endif
+#if WITH_CRYPTO
+        /* A selected provider's failure must not silently change the source. */
+        return rd_kafka_crypto_random(buf, num) == 0;
+#else
 #if HAVE_GETENTROPY
-        if (getentropy(buf, (size_t)num) == 0)
-                return rd_true;
+        while (num) {
+                size_t chunk = RD_MIN((size_t)num, (size_t)256);
+                if (getentropy(buf, chunk))
+                        return rd_false;
+                buf += chunk;
+                num -= (unsigned int)chunk;
+        }
+        return rd_true;
 #endif
 #ifdef _WIN32
         if (rd_rand_bytes_by_rand_s(buf, num))
                 return rd_true;
 #endif
         return rd_false;
+#endif
 }
 
 int rd_jitter(int low, int high) {

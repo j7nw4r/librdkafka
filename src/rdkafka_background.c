@@ -34,6 +34,7 @@
 
 #include "rd.h"
 #include "rdkafka_int.h"
+#include "rdkafka_crypto.h"
 #include "rdkafka_event.h"
 #include "rdkafka_interceptor.h"
 
@@ -144,6 +145,7 @@ int rd_kafka_background_thread_main(void *arg) {
 
         rd_kafka_dbg(rk, GENERIC, "BGQUEUE", "Background queue thread exiting");
 
+        rd_kafka_crypto_thread_term();
         rd_kafka_interceptors_on_thread_exit(rk, RD_KAFKA_THREAD_BACKGROUND);
 
         rd_atomic32_sub(&rd_kafka_thread_cnt_curr, 1);

@@ -63,6 +63,7 @@ rd_http_error_t *rd_http_get_json(rd_kafka_t *rk,
                                   cJSON **jsonp);
 
 void rd_http_global_init(void);
+const char *rd_http_revocation_unsupported(int revocation_check);
 
 
 

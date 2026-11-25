@@ -30,6 +30,8 @@
 #ifndef _RDKAFKA_CONF_H_
 #define _RDKAFKA_CONF_H_
 
+#include "rdkafka_crypto.h"
+
 #include "rdlist.h"
 #include "rdkafka_cert.h"
 
@@ -176,6 +178,12 @@ typedef enum {
 
 
 typedef enum {
+        RD_KAFKA_HTTPS_REVOCATION_DEFAULT,     /**< libcurl backend default */
+        RD_KAFKA_HTTPS_REVOCATION_BEST_EFFORT, /**< Ignore unknown status */
+        RD_KAFKA_HTTPS_REVOCATION_NONE,        /**< No revocation checks */
+} rd_kafka_https_revocation_t;
+
+typedef enum {
         RD_KAFKA_SSL_ENDPOINT_ID_NONE,
         RD_KAFKA_SSL_ENDPOINT_ID_HTTPS, /**< RFC2818 */
 } rd_kafka_ssl_endpoint_id_t;
@@ -266,6 +274,7 @@ struct rd_kafka_conf_s {
         rd_kafka_metadata_recovery_strategy_t metadata_recovery_strategy;
 
         struct {
+                void *tls_ctx; /**< Immutable selected TLS adapter config */
 #if WITH_SSL
                 SSL_CTX *ctx;
 #endif
@@ -278,6 +287,7 @@ struct rd_kafka_conf_s {
                 char *key_password;
                 char *cert_location;
                 char *cert_pem;
+                char *cert_store;
                 rd_kafka_cert_t *cert;
                 char *ca_location;
                 char *ca_pem;
@@ -312,6 +322,7 @@ struct rd_kafka_conf_s {
         struct {
                 char *ca_location;
                 char *ca_pem;
+                rd_kafka_https_revocation_t revocation_check;
         } https;
 
         struct {
@@ -328,13 +339,7 @@ struct rd_kafka_conf_s {
                 char *username;
                 char *password;
 #if WITH_SASL_SCRAM
-                /* SCRAM EVP-wrapped hash function
-                 * (return value from EVP_shaX()) */
-                const void /*EVP_MD*/ *scram_evp;
-                /* SCRAM direct hash function (e.g., SHA256()) */
-                unsigned char *(*scram_H)(const unsigned char *d,
-                                          size_t n,
-                                          unsigned char *md);
+                rd_kafka_crypto_hash_t scram_hash;
                 /* Hash size */
                 size_t scram_H_size;
 #endif

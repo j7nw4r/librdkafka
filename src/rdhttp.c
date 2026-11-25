@@ -219,55 +219,132 @@ rd_http_ssl_ctx_function(CURL *curl, void *sslctx, void *userptr) {
         return CURLE_SSL_CACERT_BADFILE;
 }
 
-static void rd_http_ssl_configure(rd_kafka_t *rk, CURL *hreq_curl) {
+#endif /* WITH_SSL: native OpenSSL callback only */
+
+/* CURLOPT_CAPATH is implemented by these curl TLS backends. Schannel and
+ * Rustls support explicit CA files/blobs but not certificate directories. */
+static rd_bool_t rd_http_curl_supports_capath(const char *backend) {
+        return backend && (!strncmp(backend, "OpenSSL/", 8) ||
+                           !strncmp(backend, "LibreSSL/", 9) ||
+                           !strncmp(backend, "BoringSSL", 9) ||
+                           !strncmp(backend, "GnuTLS/", 7) ||
+                           !strncmp(backend, "mbedTLS/", 8) ||
+                           !strncmp(backend, "wolfSSL/", 8));
+}
+
+/* True if \p backend (curl_version_info()->ssl_version) names Schannel as the
+ * active backend. MultiSSL builds put inactive backends in parentheses. */
+static rd_bool_t rd_http_curl_schannel_active(const char *backend) {
+        const char *p = backend;
+        while (p && (p = strstr(p, "Schannel"))) {
+                if (p == backend || p[-1] != '(')
+                        return rd_true;
+                p++;
+        }
+        return rd_false;
+}
+
+/**
+ * @returns NULL if this libcurl can apply \p revocation_check
+ *          (`https.revocation.check`), else the reason it cannot.
+ */
+const char *rd_http_revocation_unsupported(int revocation_check) {
+        const curl_version_info_data *version;
+        if (revocation_check == RD_KAFKA_HTTPS_REVOCATION_DEFAULT)
+                return NULL;
+#ifndef CURLSSLOPT_REVOKE_BEST_EFFORT
+        if (revocation_check == RD_KAFKA_HTTPS_REVOCATION_BEST_EFFORT)
+                return "https.revocation.check=best_effort requires "
+                       "libcurl >= 7.70.0";
+#endif
+        version = curl_version_info(CURLVERSION_NOW);
+        if (!rd_http_curl_schannel_active(version ? version->ssl_version
+                                                  : NULL))
+                return "https.revocation.check=best_effort or none requires "
+                       "libcurl with the Schannel TLS backend";
+        return NULL;
+}
+
+/* HTTP TLS is owned by libcurl, independently of the broker TLS backend.
+ * Never cast a Schannel/GnuTLS native context to SSL_CTX. Explicit trust
+ * configuration must either be applied successfully or fail initialization. */
+static CURLcode rd_http_ssl_configure(rd_kafka_t *rk, CURL *curl) {
         rd_bool_t force_probe =
             !rd_strcmp(rk->rk_conf.https.ca_location, "probe");
-
-        if (!force_probe && rk->rk_conf.https.ca_location) {
-                rd_bool_t is_dir;
-                rd_kafka_dbg(rk, SECURITY, "SSL",
-                             "Setting `https` CA certs from "
-                             "configured location: %s",
-                             rk->rk_conf.https.ca_location);
-                if (rd_file_stat(rk->rk_conf.https.ca_location, &is_dir)) {
-                        if (is_dir) {
-                                curl_easy_setopt(hreq_curl, CURLOPT_CAPATH,
-                                                 rk->rk_conf.https.ca_location);
-                                curl_easy_setopt(hreq_curl, CURLOPT_CAINFO,
-                                                 NULL);
-                        } else {
-                                curl_easy_setopt(hreq_curl, CURLOPT_CAPATH,
-                                                 NULL);
-                                curl_easy_setopt(hreq_curl, CURLOPT_CAINFO,
-                                                 rk->rk_conf.https.ca_location);
-                        }
-                } else {
-                        /* Path doesn't exist, don't set any trusted
-                         * certificate. */
-                        curl_easy_setopt(hreq_curl, CURLOPT_CAINFO, NULL);
-                        curl_easy_setopt(hreq_curl, CURLOPT_CAPATH, NULL);
-                }
-        } else if (!force_probe && rk->rk_conf.https.ca_pem) {
-#if CURL_AT_LEAST_VERSION(7, 77, 0)
-                struct curl_blob ca_blob = {
-                    .data  = rk->rk_conf.https.ca_pem,
-                    .len   = strlen(rk->rk_conf.https.ca_pem),
-                    .flags = CURL_BLOB_COPY};
-                rd_kafka_dbg(rk, SECURITY, "SSL",
-                             "Setting `https` CA certs from "
-                             "configured PEM string");
-                curl_easy_setopt(hreq_curl, CURLOPT_CAINFO_BLOB, &ca_blob);
+        const curl_version_info_data *version =
+            curl_version_info(CURLVERSION_NOW);
+        rd_bool_t curl_openssl = version && version->ssl_version &&
+                                 !strncmp(version->ssl_version, "OpenSSL/", 8);
+        rd_bool_t curl_capath =
+            rd_http_curl_supports_capath(version ? version->ssl_version : NULL);
+        CURLcode result;
+#define SET_TRUST(option, value)                                               \
+        do {                                                                   \
+                result = curl_easy_setopt(curl, (option), (value));            \
+                if (result != CURLE_OK)                                        \
+                        return result;                                         \
+        } while (0)
+        if (rk->rk_conf.https.revocation_check !=
+            RD_KAFKA_HTTPS_REVOCATION_DEFAULT) {
+                long options = CURLSSLOPT_NO_REVOKE;
+                if (rd_http_revocation_unsupported(
+                        rk->rk_conf.https.revocation_check))
+                        return CURLE_NOT_BUILT_IN;
+#ifdef CURLSSLOPT_REVOKE_BEST_EFFORT
+                if (rk->rk_conf.https.revocation_check ==
+                    RD_KAFKA_HTTPS_REVOCATION_BEST_EFFORT)
+                        options = CURLSSLOPT_REVOKE_BEST_EFFORT;
 #endif
-                /* Only the blob should be set, no default paths. */
-                curl_easy_setopt(hreq_curl, CURLOPT_CAINFO, NULL);
-                curl_easy_setopt(hreq_curl, CURLOPT_CAPATH, NULL);
-        } else {
-                curl_easy_setopt(hreq_curl, CURLOPT_SSL_CTX_FUNCTION,
-                                 rd_http_ssl_ctx_function);
-                curl_easy_setopt(hreq_curl, CURLOPT_SSL_CTX_DATA, rk);
+                SET_TRUST(CURLOPT_SSL_OPTIONS, options);
         }
-}
+        if (!force_probe && rk->rk_conf.https.ca_location) {
+                rd_bool_t directory;
+                if (!rd_file_stat(rk->rk_conf.https.ca_location, &directory))
+                        return CURLE_SSL_CACERT_BADFILE;
+                if (directory && !curl_capath)
+                        return CURLE_NOT_BUILT_IN;
+                SET_TRUST(CURLOPT_CAINFO, NULL);
+                if (curl_capath)
+                        SET_TRUST(CURLOPT_CAPATH, NULL);
+                if (directory)
+                        SET_TRUST(CURLOPT_CAPATH,
+                                  rk->rk_conf.https.ca_location);
+                else
+                        SET_TRUST(CURLOPT_CAINFO,
+                                  rk->rk_conf.https.ca_location);
+                return CURLE_OK;
+        }
+        if (rk->rk_conf.https.ca_pem) {
+#if CURL_AT_LEAST_VERSION(7, 77, 0)
+                struct curl_blob blob = {.data = rk->rk_conf.https.ca_pem,
+                                         .len =
+                                             strlen(rk->rk_conf.https.ca_pem),
+                                         .flags = CURL_BLOB_COPY};
+                SET_TRUST(CURLOPT_CAINFO, NULL);
+                if (curl_capath)
+                        SET_TRUST(CURLOPT_CAPATH, NULL);
+                SET_TRUST(CURLOPT_CAINFO_BLOB, &blob);
+                return CURLE_OK;
+#else
+                return CURLE_NOT_BUILT_IN;
 #endif
+        }
+#if WITH_SSL
+        if (curl_openssl) {
+                SET_TRUST(CURLOPT_SSL_CTX_FUNCTION, rd_http_ssl_ctx_function);
+                SET_TRUST(CURLOPT_SSL_CTX_DATA, rk);
+                return CURLE_OK;
+        }
+#else
+        (void)curl_openssl;
+#endif
+        if (force_probe)
+                return CURLE_NOT_BUILT_IN;
+        /* With no explicit trust request, preserve libcurl's native defaults.
+         */
+        return CURLE_OK;
+#undef SET_TRUST
+}
 
 /**
  * @brief Check if the error returned from HTTP(S) is temporary or not.
@@ -324,9 +401,17 @@ rd_http_req_init(rd_kafka_t *rk, rd_http_req_t *hreq, const char *url) {
                          rd_http_req_write_cb);
         curl_easy_setopt(hreq->hreq_curl, CURLOPT_WRITEDATA, (void *)hreq);
 
-#if WITH_SSL
-        rd_http_ssl_configure(rk, hreq->hreq_curl);
-#endif
+        {
+                CURLcode result = rd_http_ssl_configure(rk, hreq->hreq_curl);
+                if (result != CURLE_OK) {
+                        rd_http_req_destroy(hreq);
+                        hreq->hreq_curl = NULL;
+                        hreq->hreq_buf  = NULL;
+                        return rd_http_error_new(
+                            -1, "Could not apply HTTPS trust configuration: %s",
+                            curl_easy_strerror(result));
+                }
+        }
 
         return NULL;
 }
@@ -823,6 +908,21 @@ int unittest_http_get_params_append(void) {
 
 int unittest_http(void) {
         int fails = 0;
+        RD_UT_ASSERT(rd_http_curl_schannel_active("Schannel"),
+                     "Schannel is the active curl backend");
+        RD_UT_ASSERT(rd_http_curl_schannel_active("(OpenSSL/3.0.8) Schannel"),
+                     "MultiSSL with active Schannel");
+        RD_UT_ASSERT(!rd_http_curl_schannel_active("OpenSSL/3.0.8 (Schannel)"),
+                     "MultiSSL with inactive Schannel");
+        RD_UT_ASSERT(!rd_http_curl_schannel_active("OpenSSL/3.5.9"),
+                     "OpenSSL curl backend");
+        RD_UT_ASSERT(!rd_http_curl_schannel_active(NULL), "curl without TLS");
+        RD_UT_ASSERT(!rd_http_curl_supports_capath("Schannel"),
+                     "Schannel HTTPS must not receive unsupported CAPATH");
+        RD_UT_ASSERT(!rd_http_curl_supports_capath("Rustls/0.23"),
+                     "Rustls HTTPS does not implement CAPATH");
+        RD_UT_ASSERT(rd_http_curl_supports_capath("OpenSSL/3.5.9"),
+                     "OpenSSL HTTPS supports explicit CA directories");
 
         fails += unittest_http_get();
         fails += unittest_http_get_params_append();
