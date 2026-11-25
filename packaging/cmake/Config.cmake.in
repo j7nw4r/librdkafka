@@ -19,7 +19,7 @@ if(@WITH_ZSTD@)
   endif()
 endif()
 
-if(@WITH_SSL@)
+if(@WITH_SSL@ OR @WITH_CRYPTO_OPENSSL@)
   if(@WITH_BUNDLED_SSL@)
     # TODO: custom SSL library should be installed
   else()

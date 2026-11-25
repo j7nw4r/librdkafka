@@ -18,13 +18,12 @@
 mkl_toggle_option "Feature" ENABLE_SSL "--enable-ssl" "Enable SSL support" "try"
 
 
-function manual_checks {
-    case "$ENABLE_SSL" in
-        n) return 0 ;;
-        y) local action=fail ;;
-        try) local action=disable ;;
-        *) mkl_err "mklove internal error: invalid value for ENABLE_SSL: $ENABLE_SSL"; exit 1 ;;
-    esac
+# Check for libcrypto alone. Also used for the OpenSSL crypto backend
+# in builds without OpenSSL TLS.
+# Arguments:
+#  action (fail, disable, ..)
+function libssl_check_libcrypto {
+    local action=$1
 
     if [[ $MKL_SOURCE_DEPS_ONLY != y && $MKL_DISTRO == "osx" ]]; then
         # Add brew's OpenSSL pkg-config path on OSX
@@ -50,6 +49,30 @@ function manual_checks {
 #if OPENSSL_VERSION_NUMBER < 0x1000100fL
 #error \"Requires OpenSSL version >= v1.0.1\"
 #endif"; then
+        return 1
+    fi
+
+    # Silence OpenSSL 3.0.0 deprecation warnings since they'll make
+    # -Werror fail.
+    if ! mkl_compile_check --sub "libcrypto" "" "" CC "-lcrypto" "
+#include <openssl/ssl.h>
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+#error \"OpenSSL version >= v3.0.0 needs OPENSSL_SUPPRESS_DEPRECATED\"
+#endif"; then
+            mkl_define_set "libcrypto" OPENSSL_SUPPRESS_DEPRECATED
+    fi
+}
+
+
+function manual_checks {
+    case "$ENABLE_SSL" in
+        n) return 0 ;;
+        y) local action=fail ;;
+        try) local action=disable ;;
+        *) mkl_err "mklove internal error: invalid value for ENABLE_SSL: $ENABLE_SSL"; exit 1 ;;
+    esac
+
+    if ! libssl_check_libcrypto $action; then
         return
     fi
 
@@ -70,16 +93,6 @@ function manual_checks {
 #if OPENSSL_VERSION_NUMBER < 0x1000100fL
 #error \"Requires OpenSSL version >= v1.0.1\"
 #endif"
-
-    # Silence OpenSSL 3.0.0 deprecation warnings since they'll make
-    # -Werror fail.
-    if ! mkl_compile_check --sub "libcrypto" "" "" CC "-lcrypto" "
-#include <openssl/ssl.h>
-#if OPENSSL_VERSION_NUMBER >= 0x30000000L
-#error \"OpenSSL version >= v3.0.0 needs OPENSSL_SUPPRESS_DEPRECATED\"
-#endif"; then
-            mkl_define_set "libcrypto" OPENSSL_SUPPRESS_DEPRECATED
-    fi
 }
 
 

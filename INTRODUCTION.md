@@ -56,7 +56,7 @@ librdkafka also provides a native C++ interface.
     - [Threads and callbacks](#threads-and-callbacks)
     - [Brokers](#brokers)
       - [SSL](#ssl)
-      - [Authentication crypto backend](#authentication-crypto-backend)
+      - [TLS and authentication crypto backends](#tls-and-authentication-crypto-backends)
       - [OAUTHBEARER with support for OIDC](#oauthbearer-with-support-for-oidc)
         - [JWT bearer grant type (KIP-1139)](#jwt-bearer-grant-type-kip-1139)
         - [Metadata based authentication](#metadata-based-authentication)
@@ -1196,18 +1196,25 @@ For example, to read both intermediate and root CAs, set
 `ssl.ca.certificate.stores=CA,Root`.
 
 
-<a name="authentication-crypto-backend"></a>
-#### Authentication crypto backend
+<a name="tls-and-authentication-crypto-backends"></a>
+#### TLS and authentication crypto backends
+
+Broker TLS and authentication crypto are separate build choices. There is no
+runtime switch and no public provider API.
+
+The CMake option `RDKAFKA_TLS_BACKEND` or the configure option
+`--with-tls-backend` selects the broker TLS backend. The backends are `openssl`
+and `none`. If you do not set the option, the backend is `openssl` when
+OpenSSL is enabled, else `none`. A build with `none` does not support the
+`SSL` and `SASL_SSL` security protocols.
 
 SASL SCRAM, OIDC JWT signing and SCRAM credential upserts use a crypto
-backend for hashes, HMAC, PBKDF2, random bytes and signatures. The build
-selects one backend with the CMake option `RDKAFKA_CRYPTO_BACKEND` or the
-configure option `--with-crypto-backend`. There is no runtime switch and no
-public provider API.
-
-The backends are `openssl` and `none`. The `openssl` backend needs a build
-with OpenSSL. If you do not set the option, the backend is `openssl` when
-OpenSSL is enabled, else `none`. A build with `none` does not support SASL
+backend for hashes, HMAC, PBKDF2, random bytes and signatures. The CMake
+option `RDKAFKA_CRYPTO_BACKEND` or the configure option
+`--with-crypto-backend` selects it. The backends are `openssl` and `none`.
+If you do not set the option, the backend is `openssl` when the TLS backend
+is `openssl`, else `none`. With the TLS backend `none`, the `openssl` crypto
+backend links only libcrypto. A build with `none` does not support SASL
 SCRAM, OIDC or SCRAM credential upserts.
 
 `builtin.features` contains `auth_crypto` when the build has a crypto backend,

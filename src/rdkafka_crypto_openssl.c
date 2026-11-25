@@ -28,6 +28,7 @@
 /* OpenSSL implementation of the private crypto service interface. */
 #include "rd.h"
 #include "rdkafka_crypto.h"
+#include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/rand.h>
@@ -42,9 +43,80 @@
 #define EVP_MD_CTX_free EVP_MD_CTX_destroy
 #endif
 
-/* This adapter is built only with OpenSSL broker TLS, and rdkafka_ssl.c
- * owns the OpenSSL global and per-thread state. */
-static void global_noop(void) {
+/* With OpenSSL broker TLS, rdkafka_ssl.c owns the OpenSSL global and
+ * per-thread state. A build without it links only libcrypto, and this
+ * adapter sets up what OpenSSL older than 1.1.0 needs. */
+#if OPENSSL_VERSION_NUMBER < 0x10100000L && !WITH_SSL
+static mtx_t *crypto_locks;
+static int crypto_lock_cnt;
+
+static void crypto_lock_cb(int mode, int i, const char *file, int line) {
+        if (mode & CRYPTO_LOCK)
+                mtx_lock(&crypto_locks[i]);
+        else
+                mtx_unlock(&crypto_locks[i]);
+}
+
+static unsigned long crypto_threadid_cb(void) {
+        return thrd_current_id();
+}
+
+#ifdef HAVE_OPENSSL_CRYPTO_THREADID_SET_CALLBACK
+static void crypto_THREADID_cb(CRYPTO_THREADID *id) {
+        CRYPTO_THREADID_set_numeric(id, crypto_threadid_cb());
+}
+#endif
+#endif
+
+static void global_init(void) {
+#if OPENSSL_VERSION_NUMBER < 0x10100000L && !WITH_SSL
+        int i;
+
+        if (!CRYPTO_get_locking_callback()) {
+                crypto_lock_cnt = CRYPTO_num_locks();
+                crypto_locks =
+                    rd_malloc(crypto_lock_cnt * sizeof(*crypto_locks));
+                for (i = 0; i < crypto_lock_cnt; i++)
+                        mtx_init(&crypto_locks[i], mtx_plain);
+
+                CRYPTO_set_locking_callback(crypto_lock_cb);
+#ifdef HAVE_OPENSSL_CRYPTO_THREADID_SET_CALLBACK
+                CRYPTO_THREADID_set_callback(crypto_THREADID_cb);
+#else
+                CRYPTO_set_id_callback(crypto_threadid_cb);
+#endif
+        }
+
+        ERR_load_crypto_strings();
+        OpenSSL_add_all_algorithms();
+#endif
+}
+
+static void global_term(void) {
+#if OPENSSL_VERSION_NUMBER < 0x10100000L && !WITH_SSL
+        int i;
+
+        if (CRYPTO_get_locking_callback() == &crypto_lock_cb) {
+                CRYPTO_set_locking_callback(NULL);
+#ifdef HAVE_OPENSSL_CRYPTO_THREADID_SET_CALLBACK
+                CRYPTO_THREADID_set_callback(NULL);
+#else
+                CRYPTO_set_id_callback(NULL);
+#endif
+                for (i = 0; i < crypto_lock_cnt; i++)
+                        mtx_destroy(&crypto_locks[i]);
+                rd_free(crypto_locks);
+        }
+#endif
+}
+
+static void thread_term(void) {
+#if WITH_SSL
+#elif OPENSSL_VERSION_NUMBER >= 0x10100000L && !defined(LIBRESSL_VERSION_NUMBER)
+        /* OpenSSL releases the per-thread state itself. */
+#elif OPENSSL_VERSION_NUMBER >= 0x10000000L
+        ERR_remove_thread_state(NULL);
+#endif
 }
 
 struct rd_kafka_crypto_key_s {
@@ -270,5 +342,5 @@ done:
 }
 
 const rd_kafka_crypto_ops_t rd_kafka_crypto_openssl_ops = {
-    "openssl", global_noop,  global_noop, global_noop, digest,     hmac,
+    "openssl", global_init,  global_term, thread_term, digest,     hmac,
     pbkdf2,    random_bytes, key_load,    sign_data,   key_destroy};
