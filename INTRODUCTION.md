@@ -1203,27 +1203,29 @@ Broker TLS and authentication crypto are separate build choices. There is no
 runtime switch and no public provider API.
 
 The CMake option `RDKAFKA_TLS_BACKEND` or the configure option
-`--with-tls-backend` selects the broker TLS backend. The backends are `openssl`
-and `none`. If you do not set the option, the backend is `openssl` when
-OpenSSL is enabled, else `none`. A build with `none` does not support the
+`--with-tls-backend` selects the broker TLS backend. The backends are
+`openssl`, `schannel` and `none`. If you do not set the option, the backend is
+`openssl` when OpenSSL is enabled, else `none`. A build with `none` does not support the
 `SSL` and `SASL_SSL` security protocols.
 
 SASL SCRAM, OIDC JWT signing and SCRAM credential upserts use a crypto
 backend for hashes, HMAC, PBKDF2, random bytes and signatures. The CMake
 option `RDKAFKA_CRYPTO_BACKEND` or the configure option
 `--with-crypto-backend` selects it. The backends are `openssl`, `bcrypt` and
-`none`. If you do not set the option, the backend is `openssl` when the TLS
-backend is `openssl`, else `none`. With the TLS backend `none`, the `openssl`
+`none`. If you do not set the option, the backend is `bcrypt` when the TLS
+backend is `schannel`, `openssl` when the TLS backend is `openssl`, else
+`none`. With the TLS backend `none`, the `openssl`
 crypto backend links only libcrypto. A build with `none` does not support SASL
 SCRAM, OIDC or SCRAM credential upserts.
 
-The `bcrypt` backend is for Windows only. It uses the BCrypt and NCrypt
-functions of Windows CNG and links `bcrypt`, `ncrypt` and `crypt32`. Use it
-with the TLS backend `none` to build a library without OpenSSL, or with the
-TLS backend `openssl`. For example:
+The `schannel` and `bcrypt` backends are for Windows only. `schannel` uses
+the Windows Schannel SSP and Crypt32. `bcrypt` uses the BCrypt and NCrypt
+functions of Windows CNG. Both link `crypt32`, `bcrypt` and `ncrypt`. Use
+`bcrypt` with the TLS backend `schannel` or `none` to build a library without
+OpenSSL, or with the TLS backend `openssl`. For example:
 
 ```
-cmake -DRDKAFKA_TLS_BACKEND=none -DRDKAFKA_CRYPTO_BACKEND=bcrypt ..
+cmake -DRDKAFKA_TLS_BACKEND=schannel -DRDKAFKA_CRYPTO_BACKEND=bcrypt ..
 ```
 
 With `bcrypt`, the OIDC assertion key in
@@ -1233,9 +1235,51 @@ in PEM or DER form. The key load fails if
 `sasl.oauthbearer.assertion.private.key.passphrase` is set. A backend choice
 alone does not make a deployment FIPS compliant.
 
-`builtin.features` contains `ssl` and `tls_openssl` when the TLS backend is
-OpenSSL. It contains `auth_crypto` when the build has a crypto backend, and
-`auth_crypto_openssl` or `auth_crypto_bcrypt` names that backend.
+`builtin.features` contains `ssl` when the build has broker TLS, and
+`tls_openssl` or `tls_schannel` names that backend. It contains `auth_crypto`
+when the build has a crypto backend, and `auth_crypto_openssl` or
+`auth_crypto_bcrypt` names that backend.
+
+Schannel builds have these limits:
+
+* TLS 1.2 only. The Windows cipher suite policy applies.
+* The client always verifies the broker certificate and hostname.
+  `enable.ssl.certificate.verification=false` and
+  `ssl.endpoint.identification.algorithm=none` are refused.
+* The OpenSSL-only properties fail at `rd_kafka_conf_set()`:
+  `ssl.cipher.suites`, `ssl.curves.list`, `ssl.sigalgs.list`,
+  `ssl.key.password`, `ssl.crl.location`, `ssl.providers`,
+  `ssl.engine.location`, `ssl.engine.id` and the OpenSSL callbacks.
+* `ssl.ca.location` must be a PEM file. Directories and `probe` are refused.
+  If no CA is set, the client uses the Windows Root store.
+  `ssl.ca.certificate.stores` accepts only `Root`.
+* A client key in `ssl.key.location` or `ssl.key.pem` must be unencrypted
+  PKCS#8. Windows can refuse a key that the client imports in memory. In that
+  case, use `ssl.certificate.store`.
+
+`ssl.certificate.store` selects a client certificate that is already in the
+Windows My store, for example `CurrentUser/My/<thumbprint>` or
+`LocalMachine/My/<thumbprint>`. The thumbprint is the 40-digit hexadecimal
+SHA-1 identifier. The value can also use `\`, any case, spaces, and the
+`Cert:\` prefix that PowerShell shows. The client opens the store read-only
+and does not copy or keep the key. To import a certificate and read its
+thumbprint:
+
+```powershell
+$password = Read-Host -AsSecureString 'PFX password'
+$cert = Import-PfxCertificate -FilePath client.pfx `
+  -CertStoreLocation Cert:\CurrentUser\My -Password $password
+$cert.Thumbprint
+```
+
+A service account that reads a `LocalMachine` certificate needs Read access to
+its private key (in `certlm.msc`: All Tasks > Manage Private Keys).
+
+The OIDC token requests use libcurl, which has its own TLS backend.
+`https.revocation.check=best_effort` or `none` changes the revocation check of
+libcurl with Schannel, for example for a private CA without a reachable CRL.
+With another libcurl TLS backend, `rd_kafka_new()` fails if one of these values
+is set. `https.ca.location=probe` needs libcurl with OpenSSL.
 
 
 <a name="oauthbearer-with-support-for-oidc"></a>
