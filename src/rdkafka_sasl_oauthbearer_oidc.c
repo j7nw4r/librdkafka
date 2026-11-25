@@ -128,7 +128,7 @@ static const char *rd_kafka_jwt_b64_decode_payload(const char *src,
         int i, padding, len;
 
         int payload_len;
-        int nbytesdecoded;
+        rd_chariov_t encoded, decoded;
 
         int payloads_start = 0;
         int payloads_end   = 0;
@@ -180,13 +180,12 @@ static const char *rd_kafka_jwt_b64_decode_payload(const char *src,
                         payload[payload_len++] = '=';
         }
 
-        nbytesdecoded = ((payload_len + 3) / 4) * 3;
-        *bufplainp    = rd_malloc(nbytesdecoded + 1);
-
-        if (EVP_DecodeBlock((uint8_t *)(*bufplainp), (uint8_t *)payload,
-                            (int)payload_len) == -1) {
+        encoded.ptr  = payload;
+        encoded.size = (size_t)payload_len;
+        if (rd_base64_decode(&encoded, &decoded))
                 errstr = "Failed to decode base64 payload";
-        }
+        else
+                *bufplainp = decoded.ptr;
 
 done:
         RD_IF_FREE(payload, rd_free);

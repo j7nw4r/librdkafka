@@ -40,6 +40,7 @@ set(
     rdkafka_timer.c
     rdkafka_topic.c
     rdkafka_transport.c
+    rdkafka_tls.c
     rdkafka_crypto.c
     rdkafka_interceptor.c
     rdkafka_header.c
@@ -146,9 +147,9 @@ endif()
 if(WITHOUT_WIN32_CONFIG)
   list(APPEND rdkafka_compile_definitions WITHOUT_WIN32_CONFIG)
   if(WITH_SSL)
-    list(APPEND rdkafka_compile_definitions WITH_SSL=1)
+    list(APPEND rdkafka_compile_definitions WITH_SSL=1 WITH_TLS=1)
   else()
-    list(APPEND rdkafka_compile_definitions WITH_SSL=0)
+    list(APPEND rdkafka_compile_definitions WITH_SSL=0 WITH_TLS=0)
   endif(WITH_SSL)
   if(WITH_CRYPTO_OPENSSL)
     list(APPEND rdkafka_compile_definitions WITH_CRYPTO=1 WITH_CRYPTO_OPENSSL=1)
@@ -243,7 +244,8 @@ if(WITH_ZSTD)
   message(STATUS "Found ZSTD: ${ZSTD_LIBRARY}")
 endif()
 
-if(WITH_SSL)
+# Without OpenSSL TLS, the OpenSSL crypto backend links only libcrypto.
+if(WITH_SSL OR WITH_CRYPTO_OPENSSL)
   if(WITH_BUNDLED_SSL) # option from 'h2o' parent project
     if(NOT TARGET bundled-ssl)
       message(FATAL_ERROR "bundled-ssl target not exist")
@@ -251,11 +253,18 @@ if(WITH_SSL)
     target_include_directories(rdkafka BEFORE PRIVATE ${BUNDLED_SSL_INCLUDE_DIR})
     target_link_libraries(rdkafka PUBLIC ${BUNDLED_SSL_LIBRARIES})
     add_dependencies(rdkafka bundled-ssl)
-  else()
+  elseif(WITH_SSL)
     find_package(OpenSSL REQUIRED)
     target_include_directories(rdkafka PRIVATE ${OPENSSL_INCLUDE_DIR})
     target_link_libraries(rdkafka PUBLIC OpenSSL::SSL OpenSSL::Crypto)
     get_target_property(OPENSSL_TARGET_TYPE OpenSSL::SSL TYPE)
+    if(OPENSSL_CRYPTO_LIBRARY MATCHES "\\.a$")
+      target_compile_definitions(rdkafka PUBLIC WITH_STATIC_LIB_libcrypto)
+    endif()
+  else()
+    find_package(OpenSSL REQUIRED)
+    target_include_directories(rdkafka PRIVATE ${OPENSSL_INCLUDE_DIR})
+    target_link_libraries(rdkafka PUBLIC OpenSSL::Crypto)
     if(OPENSSL_CRYPTO_LIBRARY MATCHES "\\.a$")
       target_compile_definitions(rdkafka PUBLIC WITH_STATIC_LIB_libcrypto)
     endif()
@@ -329,6 +338,8 @@ if(NOT RDKAFKA_BUILD_STATIC)
 
   if(WITH_SSL)
     string(APPEND PKG_CONFIG_REQUIRES_PRIVATE "libcrypto libssl ")
+  elseif(WITH_CRYPTO_OPENSSL)
+    string(APPEND PKG_CONFIG_REQUIRES_PRIVATE "libcrypto ")
   endif()
 
   if(WITH_SASL_CYRUS)

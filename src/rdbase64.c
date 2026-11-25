@@ -28,8 +28,11 @@
 
 #include "rdbase64.h"
 
-#if WITH_SSL
-#include <openssl/ssl.h>
+/* Builds with OpenSSL TLS or the OpenSSL crypto backend link libcrypto. */
+#define RD_BASE64_OPENSSL (WITH_SSL || WITH_CRYPTO_OPENSSL)
+
+#if RD_BASE64_OPENSSL
+#include <openssl/evp.h>
 #else
 
 #define conv_bin2ascii(a, table) ((table)[(a) & 0x3f])
@@ -93,7 +96,7 @@ void rd_base64_encode(const rd_chariov_t *in, rd_chariov_t *out) {
         max_len  = (((in->size + 2) / 3) * 4) + 1;
         out->ptr = rd_malloc(max_len);
 
-#if WITH_SSL
+#if RD_BASE64_OPENSSL
         out->size = EVP_EncodeBlock((unsigned char *)out->ptr,
                                     (unsigned char *)in->ptr, (int)in->size);
 #else
@@ -161,7 +164,7 @@ char *rd_base64_encode_str_urlsafe(const rd_chariov_t *in) {
  */
 int rd_base64_decode(const rd_chariov_t *in, rd_chariov_t *out) {
 
-#if WITH_SSL
+#if RD_BASE64_OPENSSL
         size_t ret_len;
 
         /* OpenSSL takes an |int| argument, so |in->size| must not exceed

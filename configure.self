@@ -46,6 +46,7 @@ mkl_toggle_option "Feature" ENABLE_C11THREADS "--enable-c11threads" "Enable dete
 
 mkl_toggle_option "Feature" ENABLE_SYSLOG "--enable-syslog" "Enable logging to syslog" "y"
 
+mkl_option "Feature" env:RDKAFKA_TLS_BACKEND "--with-tls-backend=BACKEND" "Broker TLS backend: openssl or none (default: openssl if SSL is enabled, else none)" ""
 mkl_option "Feature" env:RDKAFKA_CRYPTO_BACKEND "--with-crypto-backend=BACKEND" "Authentication crypto backend: openssl or none (default: openssl if SSL is enabled, else none)" ""
 
 
@@ -105,7 +106,30 @@ void foo (void) {
 
     # optional libs
     mkl_check "zlib"
-    mkl_check "libssl"
+
+    local tls_backend="$RDKAFKA_TLS_BACKEND"
+    case "$tls_backend" in
+        "")
+            mkl_check "libssl"
+            ;;
+        openssl)
+            mkl_check "libssl"
+            if [[ $WITH_SSL != y ]]; then
+                mkl_err "--with-tls-backend=openssl requires OpenSSL (libssl)"
+                exit 1
+            fi
+            ;;
+        none)
+            if [[ $ENABLE_SSL == y ]]; then
+                mkl_err "--enable-ssl conflicts with --with-tls-backend=none"
+                exit 1
+            fi
+            ;;
+        *)
+            mkl_err "Unknown TLS backend: $tls_backend"
+            exit 1
+            ;;
+    esac
 
     local crypto_backend="$RDKAFKA_CRYPTO_BACKEND"
     if [[ -z $crypto_backend ]]; then
@@ -118,8 +142,8 @@ void foo (void) {
     case "$crypto_backend" in
         openssl)
             if [[ $WITH_SSL != y ]]; then
-                mkl_err "--with-crypto-backend=openssl requires OpenSSL (libssl)"
-                exit 1
+                # Without OpenSSL TLS, link only libcrypto.
+                libssl_check_libcrypto fail
             fi
             mkl_allvar_set WITH_CRYPTO WITH_CRYPTO y
             mkl_allvar_set WITH_CRYPTO_OPENSSL WITH_CRYPTO_OPENSSL y
@@ -173,11 +197,7 @@ void foo (void) {
     if [[ "$WITH_CRYPTO" == "y" ]]; then
         mkl_allvar_set WITH_SASL_SCRAM WITH_SASL_SCRAM y
     fi
-    if [[ "$WITH_SSL" == "y" ]]; then
-        # SASL OAUTHBEARER's default unsecured JWS implementation
-        # requires base64 encoding from OpenSSL
-        mkl_allvar_set WITH_SASL_OAUTHBEARER WITH_SASL_OAUTHBEARER y
-    fi
+    mkl_allvar_set WITH_SASL_OAUTHBEARER WITH_SASL_OAUTHBEARER y
     if [[ "$WITH_CRYPTO" == "y" && $WITH_CURL == y ]]; then
         mkl_allvar_set WITH_OAUTHBEARER_OIDC WITH_OAUTHBEARER_OIDC y
     fi

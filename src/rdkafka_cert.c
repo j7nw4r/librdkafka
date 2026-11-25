@@ -41,6 +41,8 @@
 
 #include <openssl/x509.h>
 #include <openssl/evp.h>
+#include <openssl/err.h>
+#include <openssl/pkcs12.h>
 
 /**
  * @brief OpenSSL password query callback using a conf struct.

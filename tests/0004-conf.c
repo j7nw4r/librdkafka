@@ -841,6 +841,17 @@ int main_0004_conf(int argc, char **argv) {
                     "WITH_CRYPTO_OPENSSL=%d",
                     WITH_CRYPTO, WITH_CRYPTO_OPENSSL);
 
+        {
+                int with_ssl = 0;
+#if WITH_SSL
+                with_ssl = 1;
+#endif
+                TEST_ASSERT(test_check_builtin("ssl") == with_ssl &&
+                                test_check_builtin("tls_openssl") == with_ssl,
+                            "builtin.features does not match WITH_SSL=%d",
+                            with_ssl);
+        }
+
         /* Canonical int values, aliases, s2i-verified strings, doubles */
         {
                 static const struct {

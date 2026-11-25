@@ -8,6 +8,13 @@
   select `openssl` or `none`. OpenSSL stays the default (#5693).
 * New `builtin.features` flags `auth_crypto` and `auth_crypto_openssl`
   (#5693).
+* Broker TLS now uses a private TLS interface. The new CMake option
+  `RDKAFKA_TLS_BACKEND` and configure option `--with-tls-backend` select
+  `openssl` or `none`. With `none`, the `openssl` crypto backend links only
+  libcrypto, so SASL SCRAM and OIDC work in builds without broker TLS
+  (#5693).
+* New `builtin.features` flag `tls_openssl` (#5693).
+* SASL OAUTHBEARER no longer needs OpenSSL at build time (#5693).
 
 
 ## Fixes
@@ -17,6 +24,14 @@
 * OAUTHBEARER/OIDC: ES256 JWT assertions carried a DER-encoded signature.
   They now carry the 64-byte `R || S` form that RFC 7518 section 3.4
   requires (#5693).
+* SSL: a purge or request timeout could remove a request that OpenSSL had
+  partly sent but that had a send offset of zero. The next request then
+  failed the connection with "bad write retry". Such a request now counts
+  as partially sent. Termination now also closes a connection when it
+  fails a partially sent request (#5693).
+* OAUTHBEARER/OIDC: the token payload decoder did not terminate the decoded
+  payload when its base64 length was a multiple of 4, and the JSON parser
+  read past the buffer (#5693).
 * Fix the bundled zlib being built without optimisation, which slowed down
   gzip compression in self-contained builds. Happening since 1.4.0 (#5673).
 

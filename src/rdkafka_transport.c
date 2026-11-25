@@ -48,8 +48,8 @@
 #define MSG_DONTWAIT MSG_NONBLOCK
 #endif
 
-#if WITH_SSL
-#include "rdkafka_ssl.h"
+#if WITH_TLS
+#include "rdkafka_tls.h"
 #endif
 
 /**< Current thread's rd_kafka_transport_t instance.
@@ -80,10 +80,10 @@ static void rd_kafka_transport_close0(rd_kafka_t *rk, rd_socket_t s) {
  * Close and destroy a transport handle
  */
 void rd_kafka_transport_close(rd_kafka_transport_t *rktrans) {
-#if WITH_SSL
+#if WITH_TLS
         rd_kafka_curr_transport = rktrans;
-        if (rktrans->rktrans_ssl)
-                rd_kafka_transport_ssl_close(rktrans);
+        if (rktrans->rktrans_tls)
+                rd_kafka_tls_ops->close(rktrans);
 #endif
 
         rd_kafka_sasl_close(rktrans);
@@ -397,11 +397,10 @@ ssize_t rd_kafka_transport_send(rd_kafka_transport_t *rktrans,
                                 char *errstr,
                                 size_t errstr_size) {
         ssize_t r;
-#if WITH_SSL
-        if (rktrans->rktrans_ssl) {
+#if WITH_TLS
+        if (rktrans->rktrans_tls) {
                 rd_kafka_curr_transport = rktrans;
-                r = rd_kafka_transport_ssl_send(rktrans, slice, errstr,
-                                                errstr_size);
+                r = rd_kafka_tls_ops->send(rktrans, slice, errstr, errstr_size);
         } else
 #endif
                 r = rd_kafka_transport_socket_send(rktrans, slice, errstr,
@@ -417,11 +416,10 @@ ssize_t rd_kafka_transport_recv(rd_kafka_transport_t *rktrans,
                                 size_t errstr_size) {
         ssize_t r;
 
-#if WITH_SSL
-        if (rktrans->rktrans_ssl) {
+#if WITH_TLS
+        if (rktrans->rktrans_tls) {
                 rd_kafka_curr_transport = rktrans;
-                r = rd_kafka_transport_ssl_recv(rktrans, rbuf, errstr,
-                                                errstr_size);
+                r = rd_kafka_tls_ops->recv(rktrans, rbuf, errstr, errstr_size);
         } else
 #endif
                 r = rd_kafka_transport_socket_recv(rktrans, rbuf, errstr,
@@ -430,6 +428,23 @@ ssize_t rd_kafka_transport_recv(rd_kafka_transport_t *rktrans,
         return r;
 }
 
+
+
+/**
+ * @returns true if the transport has sent or committed part of the
+ *          request in \p slice. The request can then only be removed
+ *          together with the connection.
+ */
+rd_bool_t rd_kafka_transport_request_has_started(rd_kafka_transport_t *rktrans,
+                                                 const rd_slice_t *slice) {
+        if (rd_slice_offset(slice) > 0)
+                return rd_true;
+#if WITH_TLS
+        if (rktrans && rktrans->rktrans_tls)
+                return rd_kafka_tls_ops->send_pending(rktrans, slice);
+#endif
+        return rd_false;
+}
 
 
 /**
@@ -599,7 +614,7 @@ static void rd_kafka_transport_connected(rd_kafka_transport_t *rktrans) {
 
         rd_kafka_transport_post_connect_setup(rktrans);
 
-#if WITH_SSL
+#if WITH_TLS
         if (rkb->rkb_proto == RD_KAFKA_PROTO_SSL ||
             rkb->rkb_proto == RD_KAFKA_PROTO_SASL_SSL) {
                 char errstr[512];
@@ -612,8 +627,8 @@ static void rd_kafka_transport_connected(rd_kafka_transport_t *rktrans) {
                 /* Set up SSL connection.
                  * This is also an asynchronous operation so dont
                  * propagate to broker_connect_done() just yet. */
-                if (rd_kafka_transport_ssl_connect(rkb, rktrans, errstr,
-                                                   sizeof(errstr)) == -1) {
+                if (rd_kafka_tls_ops->connect(rkb, rktrans, errstr,
+                                              sizeof(errstr)) == -1) {
                         rd_kafka_transport_connect_done(rktrans, errstr);
                         return;
                 }
@@ -705,12 +720,12 @@ static void rd_kafka_transport_io_event(rd_kafka_transport_t *rktrans,
                 break;
 
         case RD_KAFKA_BROKER_STATE_SSL_HANDSHAKE:
-#if WITH_SSL
-                rd_assert(rktrans->rktrans_ssl);
+#if WITH_TLS
+                rd_assert(rktrans->rktrans_tls);
 
                 /* Currently setting up SSL connection:
                  * perform handshake. */
-                r = rd_kafka_transport_ssl_handshake(rktrans);
+                r = rd_kafka_tls_ops->handshake(rktrans);
 
                 if (r == 0 /* handshake still in progress */ &&
                     (events & POLLHUP)) {

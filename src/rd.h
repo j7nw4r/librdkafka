@@ -71,7 +71,11 @@
 #include "../config.h" /* mklove output */
 #endif
 
-/* Build configurations without a crypto backend choice follow OpenSSL. */
+/* Build configurations without a TLS or crypto backend choice follow
+ * OpenSSL. */
+#ifndef WITH_TLS
+#define WITH_TLS WITH_SSL
+#endif
 #ifndef WITH_CRYPTO_OPENSSL
 #define WITH_CRYPTO_OPENSSL WITH_SSL
 #endif
