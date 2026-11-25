@@ -1217,8 +1217,9 @@ is `openssl`, else `none`. With the TLS backend `none`, the `openssl` crypto
 backend links only libcrypto. A build with `none` does not support SASL
 SCRAM, OIDC or SCRAM credential upserts.
 
-`builtin.features` contains `auth_crypto` when the build has a crypto backend,
-and `auth_crypto_openssl` when that backend is OpenSSL.
+`builtin.features` contains `ssl` and `tls_openssl` when the TLS backend is
+OpenSSL. It contains `auth_crypto` when the build has a crypto backend, and
+`auth_crypto_openssl` when that backend is OpenSSL.
 
 
 <a name="oauthbearer-with-support-for-oidc"></a>

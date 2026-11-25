@@ -391,6 +391,7 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
      "Indicates the builtin features for this build of librdkafka. "
      "An application can either query this value or attempt to set it "
      "with its list of required features to check for library support. "
+     "`ssl` means broker TLS, and `tls_openssl` names the OpenSSL backend. "
      "`auth_crypto` means a crypto backend for SASL SCRAM, OIDC JWT signing "
      "and SCRAM credential upserts, and `auth_crypto_openssl` names the "
      "OpenSSL backend.",
@@ -415,6 +416,12 @@ static const struct rd_kafka_property rd_kafka_properties[] = {
              {0x800, "sasl_oauthbearer", _UNSUPPORTED_OAUTHBEARER},
              {0x1000, "http", _UNSUPPORTED_HTTP},
              {0x2000, "oidc", _UNSUPPORTED_OIDC},
+             {0x4000, "tls_openssl"
+#if !WITH_SSL
+              ,
+              .unsupported = "OpenSSL TLS backend not available at build time"
+#endif
+             },
              {0x10000, "auth_crypto_openssl"
 #if !WITH_CRYPTO_OPENSSL
               ,
