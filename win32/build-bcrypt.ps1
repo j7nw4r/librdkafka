@@ -98,14 +98,20 @@ foreach ($module in @('bcrypt.dll', 'ncrypt.dll', 'crypt32.dll')) {
 
 $functions = & $dumpbin.FullName /IMPORTS $dll.FullName | Out-String
 Assert-ExitCode 'dumpbin /IMPORTS'
+# SASL GSSAPI passes a wide target name, so it must call the W functions:
+# CMake builds do not define UNICODE.
 $required = @('BCryptGenRandom', 'BCryptDeriveKeyPBKDF2', 'BCryptCreateHash',
-    'NCryptImportKey', 'NCryptSignHash')
+    'NCryptImportKey', 'NCryptSignHash', 'AcquireCredentialsHandleW',
+    'InitializeSecurityContextW')
 # rdkafka.c calls curl_global_init() only when WITH_CURL reaches the compiler.
 if ($WithCurl) { $required += 'curl_global_init' }
 foreach ($function in $required) {
     if ($functions -notmatch [regex]::Escape($function)) {
         throw "rdkafka.dll does not import $function"
     }
+}
+if ($functions -match 'InitializeSecurityContextA') {
+    throw 'rdkafka.dll imports InitializeSecurityContextA'
 }
 
 if ($TlsBackend -eq 'none') {
