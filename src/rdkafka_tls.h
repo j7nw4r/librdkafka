@@ -59,6 +59,18 @@ typedef struct rd_kafka_tls_ops_s {
         rd_bool_t (*send_pending)(rd_kafka_transport_t *rktrans,
                                   const rd_slice_t *slice);
         void (*close)(rd_kafka_transport_t *rktrans);
+
+        /* Optional hooks for an adapter that buffers socket data itself.
+         * pending(): recv() can return data without a new socket event.
+         * interests(): socket events the adapter needs, also with no
+         * request queued. serve(): handle those events before the
+         * transport reads or writes. */
+        rd_bool_t (*pending)(rd_kafka_transport_t *rktrans);
+        int (*interests)(rd_kafka_transport_t *rktrans);
+        int (*serve)(rd_kafka_transport_t *rktrans,
+                     int events,
+                     char *errstr,
+                     size_t errstr_size);
 } rd_kafka_tls_ops_t;
 
 extern const rd_kafka_tls_ops_t rd_kafka_openssl_ops;

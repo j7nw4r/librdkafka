@@ -678,6 +678,17 @@ static void rd_kafka_transport_io_event(rd_kafka_transport_t *rktrans,
         int r;
         rd_kafka_broker_t *rkb = rktrans->rktrans_rkb;
 
+#if WITH_TLS
+        if (rktrans->rktrans_tls && rd_kafka_tls_ops->serve &&
+            rkb->rkb_state > RD_KAFKA_BROKER_STATE_SSL_HANDSHAKE &&
+            rd_kafka_tls_ops->serve(rktrans, events, errstr, sizeof(errstr)) ==
+                -1) {
+                rd_kafka_broker_fail(rkb, LOG_ERR, RD_KAFKA_RESP_ERR__SSL, "%s",
+                                     errstr);
+                return;
+        }
+#endif
+
         switch (rkb->rkb_state) {
         case RD_KAFKA_BROKER_STATE_CONNECT:
                 /* Asynchronous connect finished, read status. */
@@ -991,8 +1002,20 @@ int rd_kafka_transport_io_serve(rd_kafka_transport_t *rktrans,
                                 int timeout_ms) {
         rd_kafka_broker_t *rkb = rktrans->rktrans_rkb;
         int events;
+        int buffered_events = 0;
 
         rd_kafka_curr_transport = rktrans;
+#if WITH_TLS
+        if (rktrans->rktrans_tls && rd_kafka_tls_ops->interests)
+                rd_kafka_transport_poll_set(
+                    rktrans, rd_kafka_tls_ops->interests(rktrans));
+        if (rktrans->rktrans_tls && rd_kafka_tls_ops->pending &&
+            rkb->rkb_state > RD_KAFKA_BROKER_STATE_SSL_HANDSHAKE &&
+            rd_kafka_tls_ops->pending(rktrans)) {
+                buffered_events = POLLIN;
+                timeout_ms      = 0;
+        }
+#endif
 
         if (
 #ifndef _WIN32
@@ -1022,12 +1045,16 @@ int rd_kafka_transport_io_serve(rd_kafka_transport_t *rktrans,
         events = rd_kafka_transport_io_serve_win32(rktrans, rkq, timeout_ms);
 
 #else
-        if (rd_kafka_transport_poll(rktrans, timeout_ms) < 1)
+        if (rd_kafka_transport_poll(rktrans, timeout_ms) >= 1)
+                events = rktrans->rktrans_pfd[0].revents;
+        else if (!buffered_events)
                 return 0; /* No events, caller can block on \p rkq poll */
-
-        /* Broker socket events */
-        events = rktrans->rktrans_pfd[0].revents;
+        else
+                /* revents may be unset after a poll() error. */
+                events = 0;
 #endif
+
+        events |= buffered_events;
 
         if (events) {
                 rd_kafka_transport_poll_clear(rktrans, POLLOUT | POLLIN);
