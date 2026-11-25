@@ -191,6 +191,13 @@ add_test(NAME RdKafkaTestSequentially COMMAND test-runner -p1)
 add_test(NAME RdKafkaTestBrokerLess COMMAND test-runner -p5 -l)
 add_test(NAME RdKafkaTestBrokerLessQuick COMMAND test-runner -p5 -l -Q)
 
+# Schannel interop check for schannel_transport.py. It compiles the adapter
+# source in, so it links the static library.
+if(WITH_SCHANNEL AND RDKAFKA_BUILD_STATIC)
+  add_executable(schannel-transport-test schannel_transport.c)
+  target_link_libraries(schannel-transport-test PRIVATE rdkafka)
+endif()
+
 if(NOT WIN32 AND NOT APPLE)
   set(tests_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
   add_subdirectory(interceptor_test)
