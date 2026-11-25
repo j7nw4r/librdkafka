@@ -1330,10 +1330,15 @@ static int rd_kafka_ssl_set_certs(rd_kafka_t *rk,
                 rd_kafka_dbg(rk, SECURITY, "SSL",
                              "Loading CA certificate(s) from memory");
 
+                /* Config duplicates share immutable cert objects. The context
+                 * owns a new reference, never the configuration's reference. */
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+                X509_STORE_up_ref(rk->rk_conf.ssl.ca->store);
+#else
+                CRYPTO_add(&rk->rk_conf.ssl.ca->store->references, 1,
+                           CRYPTO_LOCK_X509_STORE);
+#endif
                 SSL_CTX_set_cert_store(ctx, rk->rk_conf.ssl.ca->store);
-
-                /* OpenSSL takes ownership of the store */
-                rk->rk_conf.ssl.ca->store = NULL;
 
                 ca_probe = rd_false;
 
@@ -1521,16 +1526,13 @@ static int rd_kafka_ssl_set_certs(rd_kafka_t *rk,
                 }
 
                 if (rk->rk_conf.ssl.cert->chain) {
-                        r = SSL_CTX_set0_chain(ctx,
+                        r = SSL_CTX_set1_chain(ctx,
                                                rk->rk_conf.ssl.cert->chain);
                         if (r != 1) {
                                 rd_snprintf(errstr, errstr_size,
                                             "ssl_cert failed: "
                                             "setting certificate chain: ");
                                 return -1;
-                        } else {
-                                /* The chain is now owned by the CTX */
-                                rk->rk_conf.ssl.cert->chain = NULL;
                         }
                 }
         }
