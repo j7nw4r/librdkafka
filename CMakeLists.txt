@@ -140,8 +140,8 @@ endif()
 # }
 
 # Authentication crypto backend {
-set(RDKAFKA_CRYPTO_BACKEND "" CACHE STRING "Authentication crypto backend: openssl, none (empty: openssl if WITH_SSL, else none)")
-set_property(CACHE RDKAFKA_CRYPTO_BACKEND PROPERTY STRINGS "" openssl none)
+set(RDKAFKA_CRYPTO_BACKEND "" CACHE STRING "Authentication crypto backend: openssl, bcrypt, none (empty: openssl if WITH_SSL, else none)")
+set_property(CACHE RDKAFKA_CRYPTO_BACKEND PROPERTY STRINGS "" openssl bcrypt none)
 set(rdkafka_crypto_backend "${RDKAFKA_CRYPTO_BACKEND}")
 if(rdkafka_crypto_backend STREQUAL "")
   if(WITH_SSL)
@@ -151,12 +151,21 @@ if(rdkafka_crypto_backend STREQUAL "")
   endif()
 endif()
 set(WITH_CRYPTO_OPENSSL OFF)
+set(WITH_CRYPTO_BCRYPT OFF)
 if(rdkafka_crypto_backend STREQUAL "openssl")
   set(WITH_CRYPTO_OPENSSL ON)
+elseif(rdkafka_crypto_backend STREQUAL "bcrypt")
+  if(NOT WIN32)
+    message(FATAL_ERROR "RDKAFKA_CRYPTO_BACKEND=bcrypt requires Windows")
+  endif()
+  set(WITH_CRYPTO_BCRYPT ON)
 elseif(NOT rdkafka_crypto_backend STREQUAL "none")
   message(FATAL_ERROR "Unknown RDKAFKA_CRYPTO_BACKEND: ${RDKAFKA_CRYPTO_BACKEND}")
 endif()
-set(WITH_CRYPTO ${WITH_CRYPTO_OPENSSL})
+set(WITH_CRYPTO OFF)
+if(WITH_CRYPTO_OPENSSL OR WITH_CRYPTO_BCRYPT)
+  set(WITH_CRYPTO ON)
+endif()
 # }
 
 # SASL {

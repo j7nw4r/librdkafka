@@ -21,6 +21,7 @@ SRCS_$(WITH_ZSTD) += rdkafka_zstd.c
 SRCS_$(WITH_HDRHISTOGRAM) += rdhdrhistogram.c
 SRCS_$(WITH_SSL) += rdkafka_ssl.c
 SRCS_$(WITH_CRYPTO_OPENSSL) += rdkafka_crypto_openssl.c
+SRCS_$(WITH_CRYPTO_BCRYPT) += rdkafka_crypto_bcrypt.c
 SRCS_$(WITH_CURL) += rdhttp.c
 SRCS_$(WITH_OAUTHBEARER_OIDC) += rdkafka_sasl_oauthbearer_oidc.c
 

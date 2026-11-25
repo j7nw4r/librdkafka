@@ -40,6 +40,7 @@
 #cmakedefine01 WITH_TLS
 #cmakedefine01 WITH_CRYPTO
 #cmakedefine01 WITH_CRYPTO_OPENSSL
+#cmakedefine01 WITH_CRYPTO_BCRYPT
 #cmakedefine01 WITH_SASL
 #cmakedefine01 WITH_SASL_SCRAM
 #cmakedefine01 WITH_SASL_OAUTHBEARER

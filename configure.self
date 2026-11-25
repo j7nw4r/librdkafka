@@ -47,7 +47,7 @@ mkl_toggle_option "Feature" ENABLE_C11THREADS "--enable-c11threads" "Enable dete
 mkl_toggle_option "Feature" ENABLE_SYSLOG "--enable-syslog" "Enable logging to syslog" "y"
 
 mkl_option "Feature" env:RDKAFKA_TLS_BACKEND "--with-tls-backend=BACKEND" "Broker TLS backend: openssl or none (default: openssl if SSL is enabled, else none)" ""
-mkl_option "Feature" env:RDKAFKA_CRYPTO_BACKEND "--with-crypto-backend=BACKEND" "Authentication crypto backend: openssl or none (default: openssl if SSL is enabled, else none)" ""
+mkl_option "Feature" env:RDKAFKA_CRYPTO_BACKEND "--with-crypto-backend=BACKEND" "Authentication crypto backend: openssl, bcrypt (Windows) or none (default: openssl if SSL is enabled, else none)" ""
 
 
 function checks {
@@ -147,10 +147,29 @@ void foo (void) {
             fi
             mkl_allvar_set WITH_CRYPTO WITH_CRYPTO y
             mkl_allvar_set WITH_CRYPTO_OPENSSL WITH_CRYPTO_OPENSSL y
+            mkl_allvar_set WITH_CRYPTO_BCRYPT WITH_CRYPTO_BCRYPT n
+            ;;
+        bcrypt)
+            mkl_compile_check bcrypt WITH_CRYPTO_BCRYPT fail CC \
+                "-lbcrypt -lncrypt -lcrypt32" '
+#include <windows.h>
+#include <bcrypt.h>
+#include <ncrypt.h>
+#include <wincrypt.h>
+int foo(void) {
+    unsigned char b;
+    return BCryptGenRandom(NULL, &b, 1, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+}'
+            mkl_mkvar_append bcrypt LIBS "-lbcrypt -lncrypt -lcrypt32"
+            mkl_mkvar_append bcrypt MKL_PKGCONFIG_LIBS_PRIVATE \
+                "-lbcrypt -lncrypt -lcrypt32"
+            mkl_allvar_set WITH_CRYPTO WITH_CRYPTO y
+            mkl_allvar_set WITH_CRYPTO_OPENSSL WITH_CRYPTO_OPENSSL n
             ;;
         none)
             mkl_allvar_set WITH_CRYPTO WITH_CRYPTO n
             mkl_allvar_set WITH_CRYPTO_OPENSSL WITH_CRYPTO_OPENSSL n
+            mkl_allvar_set WITH_CRYPTO_BCRYPT WITH_CRYPTO_BCRYPT n
             ;;
         *)
             mkl_err "Unknown crypto backend: $crypto_backend"

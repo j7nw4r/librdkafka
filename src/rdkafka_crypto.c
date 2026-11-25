@@ -30,6 +30,9 @@
 #if WITH_CRYPTO_OPENSSL
 const rd_kafka_crypto_ops_t *const rd_kafka_crypto_ops =
     &rd_kafka_crypto_openssl_ops;
+#elif WITH_CRYPTO_BCRYPT
+const rd_kafka_crypto_ops_t *const rd_kafka_crypto_ops =
+    &rd_kafka_crypto_bcrypt_ops;
 #else
 const rd_kafka_crypto_ops_t *const rd_kafka_crypto_ops = NULL;
 #endif
@@ -302,6 +305,27 @@ static int ut_crypto_sign_es256(void) {
         return 0;
 }
 
+/* openssl pkcs12 writes "Bag Attributes" text, and a PEM file can hold the
+ * certificate before the key. */
+static int ut_crypto_key_load_after_text(void) {
+        static const char prefix[] =
+            "Bag Attributes\n"
+            "    localKeyID: 01 00 00 00\n"
+            "-----BEGIN CERTIFICATE-----\n"
+            "AAAA\n"
+            "-----END CERTIFICATE-----\n";
+        char pem[sizeof(prefix) + sizeof(ut_ec_key)];
+        rd_kafka_crypto_key_t *key;
+        char errstr[256];
+
+        rd_snprintf(pem, sizeof(pem), "%s%s", prefix, ut_ec_key);
+        key = rd_kafka_crypto_key_load(pem, strlen(pem), NULL, errstr,
+                                       sizeof(errstr));
+        RD_UT_ASSERT(key, "key import after text failed: %s", errstr);
+        rd_kafka_crypto_key_destroy(key);
+        return 0;
+}
+
 int unittest_crypto(void) {
         unsigned char out[64], key[20], random1[32], random2[32];
         char errstr[128];
@@ -393,7 +417,8 @@ int unittest_crypto(void) {
         RD_UT_ASSERT(!rd_kafka_crypto_key_load("invalid key", 11, NULL, errstr,
                                                sizeof(errstr)),
                      "invalid key must fail to load");
-        if (ut_crypto_sign_rs256() || ut_crypto_sign_es256())
+        if (ut_crypto_key_load_after_text() || ut_crypto_sign_rs256() ||
+            ut_crypto_sign_es256())
                 return 1;
 
         RD_UT_PASS();
