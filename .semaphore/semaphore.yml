@@ -319,6 +319,19 @@ blocks:
           commands:
             - "& .\\win32\\build-bcrypt.ps1"
 
+  - name: 'Windows x64: Schannel and BCrypt'
+    dependencies: []
+    skip:
+      when: "tag =~ '^v[0-9]\\.'"
+    task:
+      agent:
+        machine:
+          type: s1-prod-windows
+      jobs:
+        - name: 'Build, local tests and import audit'
+          commands:
+            - "& .\\win32\\build-schannel-bcrypt.ps1"
+
   - name: 'Linux x64: release artifact docker builds'
     dependencies: []
     run:
